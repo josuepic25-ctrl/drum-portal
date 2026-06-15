@@ -424,7 +424,302 @@ K:C clef=perc
 
   <script>
     'use strict';
-    // Modules added in Tasks 2–7
+
+    /* ═══════════════════════════════════════
+       STATE MODULE — single source of truth
+    ═══════════════════════════════════════ */
+    const StateModule = (() => {
+      const _state = {
+        abcCode:       '',
+        lastValidCode: '',
+        visualObj:     null,
+        guideOpen:     false,
+        tempoBpm:      120
+      };
+      return {
+        get(key)      { return _state[key]; },
+        set(key, val) { _state[key] = val;  }
+      };
+    })();
+
+    /* ═══════════════════════════════════════
+       EDITOR MODULE — textarea + 400ms debounce
+    ═══════════════════════════════════════ */
+    const EditorModule = (() => {
+      let _textarea         = null;
+      let _debounceTimer    = null;
+      let _onChangeCallback = null;
+
+      return {
+        init(textareaEl, onChangeFn) {
+          _textarea         = textareaEl;
+          _onChangeCallback = onChangeFn;
+
+          _textarea.addEventListener('input', () => {
+            StateModule.set('abcCode', _textarea.value);
+            clearTimeout(_debounceTimer);
+            _debounceTimer = setTimeout(() => {
+              if (_onChangeCallback) _onChangeCallback();
+            }, 400);
+          });
+        },
+        getValue() { return _textarea ? _textarea.value : ''; }
+      };
+    })();
+
+    /* ═══════════════════════════════════════
+       RENDERER MODULE — abcjs SVG render
+    ═══════════════════════════════════════ */
+    const RendererModule = (() => {
+      let _renderEl = null;
+      let _badgeEl  = null;
+
+      function _setBadge(type, text) {
+        _badgeEl.className   = type;
+        _badgeEl.textContent = text;
+      }
+
+      return {
+        init(renderEl, badgeEl) {
+          _renderEl = renderEl;
+          _badgeEl  = badgeEl;
+        },
+
+        render() {
+          const code = StateModule.get('abcCode').trim();
+          if (!code) {
+            _renderEl.innerHTML = '';
+            _setBadge('', '');
+            if (typeof PlaybackModule !== 'undefined') PlaybackModule.enableControls(false);
+            return;
+          }
+
+          const visualObj = ABCJS.renderAbc(_renderEl, code, {
+            responsive:     'resize',
+            scale:          1.2,
+            paddingtop:     20,
+            paddingbottom:  20,
+            add_classes:    true,
+            oneSvgPerLine:  false,
+            selectionColor: '#58a6ff'
+          });
+
+          const warnings = (visualObj[0] && visualObj[0].warnings)
+            ? visualObj[0].warnings : [];
+          const hasError = warnings.some(w => /error/i.test(w));
+          const hasWarn  = warnings.length > 0;
+
+          if (hasError) {
+            _setBadge('error', '✕ ' + warnings[0]);
+            if (typeof PlaybackModule !== 'undefined') PlaybackModule.enableControls(false);
+          } else {
+            StateModule.set('visualObj', visualObj[0]);
+            StateModule.set('lastValidCode', code);
+            if (typeof PlaybackModule !== 'undefined') {
+              PlaybackModule.enableControls(true);
+              PlaybackModule.syncTempoFromCode(code);
+            }
+            _setBadge(hasWarn ? 'warning' : 'ok', hasWarn ? '⚠ ' + warnings[0] : '✓ OK');
+          }
+        }
+      };
+    })();
+
+    /* ═══════════════════════════════════════
+       GUIDE MODULE — FAB + 2-tab popup
+    ═══════════════════════════════════════ */
+    const GuideModule = (() => {
+      let _fab      = null;
+      let _popup    = null;
+      let _closeBtn = null;
+      let _tabs     = null;
+
+      function _open()  { _popup.classList.add('open');    StateModule.set('guideOpen', true);  }
+      function _close() { _popup.classList.remove('open'); StateModule.set('guideOpen', false); }
+
+      return {
+        init(fabEl, popupEl, closeBtnEl, tabEls) {
+          _fab      = fabEl;
+          _popup    = popupEl;
+          _closeBtn = closeBtnEl;
+          _tabs     = tabEls;
+
+          _fab.addEventListener('click', (e) => {
+            e.stopPropagation();
+            StateModule.get('guideOpen') ? _close() : _open();
+          });
+
+          _closeBtn.addEventListener('click', _close);
+
+          document.addEventListener('click', (e) => {
+            if (StateModule.get('guideOpen') &&
+                !_popup.contains(e.target) &&
+                e.target !== _fab) {
+              _close();
+            }
+          });
+
+          _tabs.forEach((tab) => {
+            tab.addEventListener('click', () => {
+              const target = tab.dataset.tab;
+              _tabs.forEach(t => t.classList.remove('active'));
+              document.querySelectorAll('.guide-pane').forEach(p => p.classList.remove('active'));
+              tab.classList.add('active');
+              document.getElementById('pane-' + target).classList.add('active');
+            });
+          });
+        }
+      };
+    })();
+
+    /* ═══════════════════════════════════════
+       PLAYBACK MODULE — ABCJS.synth + GM drums
+    ═══════════════════════════════════════ */
+    const PlaybackModule = (() => {
+      const SOUNDFONT_URL = 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/';
+      let _synth     = null;
+      let _playState = 'stopped';
+      let _btnPlay   = null;
+      let _btnStop   = null;
+      let _sliderEl  = null;
+      let _inputEl   = null;
+
+      function _setPlayState(state) {
+        _playState = state;
+        if (state === 'playing') {
+          _btnPlay.textContent = '⏸ Pause';
+          _btnPlay.classList.add('playing');
+        } else if (state === 'paused') {
+          _btnPlay.textContent = '▶ Resume';
+          _btnPlay.classList.remove('playing');
+        } else {
+          _btnPlay.textContent = '▶ Play';
+          _btnPlay.classList.remove('playing');
+        }
+      }
+
+      function _syncTempo(rawBpm) {
+        const bpm = Math.max(40, parseInt(rawBpm, 10) || 120);
+        StateModule.set('tempoBpm', bpm);
+        _inputEl.value = bpm;
+        if (bpm > parseInt(_sliderEl.max, 10)) {
+          _sliderEl.max = bpm;
+        }
+        _sliderEl.value = bpm;
+      }
+
+      function _destroySynth() {
+        if (_synth) {
+          try { _synth.stop(); } catch (e) {}
+          try { _synth.destroy(); } catch (e) {}
+          _synth = null;
+        }
+      }
+
+      async function _startSynth() {
+        _destroySynth();
+        const visualObj = StateModule.get('visualObj');
+        if (!visualObj) return;
+        _synth = new ABCJS.synth.CreateSynth();
+        try {
+          await _synth.init({
+            visualObj: visualObj,
+            options: {
+              soundFontUrl: SOUNDFONT_URL,
+              chordsOff:    true,
+              defaultQpm:   StateModule.get('tempoBpm')
+            }
+          });
+          await _synth.prime();
+          _synth.start();
+          _setPlayState('playing');
+        } catch (err) {
+          console.warn('PlaybackModule error:', err);
+          _destroySynth();
+          _setPlayState('stopped');
+        }
+      }
+
+      return {
+        init(playBtn, stopBtn, sliderEl, inputEl) {
+          _btnPlay  = playBtn;
+          _btnStop  = stopBtn;
+          _sliderEl = sliderEl;
+          _inputEl  = inputEl;
+
+          _sliderEl.addEventListener('input', () => _syncTempo(_sliderEl.value));
+
+          _inputEl.addEventListener('input', () => {
+            const val = parseInt(_inputEl.value, 10);
+            if (!isNaN(val) && val >= 40) _syncTempo(val);
+          });
+          _inputEl.addEventListener('change', () => _syncTempo(_inputEl.value));
+
+          _btnPlay.addEventListener('click', async () => {
+            if (_playState === 'stopped')      { await _startSynth(); }
+            else if (_playState === 'playing') { _synth.pause();  _setPlayState('paused');  }
+            else if (_playState === 'paused')  { _synth.resume(); _setPlayState('playing'); }
+          });
+
+          _btnStop.addEventListener('click', () => {
+            _destroySynth();
+            _setPlayState('stopped');
+          });
+        },
+
+        enableControls(enabled) {
+          _btnPlay.disabled = !enabled;
+          _btnStop.disabled = !enabled;
+        },
+
+        syncTempoFromCode(code) {
+          const match = code.match(/^Q:\s*(\d+)/m);
+          if (match) _syncTempo(parseInt(match[1], 10));
+        }
+      };
+    })();
+
+    /* ═══════════════════════════════════════
+       APP INIT — wire everything on load
+    ═══════════════════════════════════════ */
+    window.addEventListener('load', function AppInit() {
+      const DEFAULT_ABC = [
+        'X:1',
+        'T:Groove básico 4/4',
+        'M:4/4',
+        'L:1/8',
+        'Q:100',
+        'K:C clef=perc',
+        '|B,2 ^g c ^g B,c ^g| B,2 ^g c ^g B,c ^g|',
+        '|B,2 ^g c ^g B,c ^g| B,4 z4              |'
+      ].join('\n');
+
+      RendererModule.init(
+        document.getElementById('render-panel'),
+        document.getElementById('status-badge')
+      );
+
+      PlaybackModule.init(
+        document.getElementById('btn-play'),
+        document.getElementById('btn-stop'),
+        document.getElementById('tempo-slider'),
+        document.getElementById('tempo-input')
+      );
+
+      const editorEl = document.getElementById('abc-editor');
+      EditorModule.init(editorEl, () => RendererModule.render());
+
+      GuideModule.init(
+        document.getElementById('fab-guide'),
+        document.getElementById('guide-popup'),
+        document.getElementById('guide-close-btn'),
+        Array.from(document.querySelectorAll('.guide-tab'))
+      );
+
+      editorEl.value = DEFAULT_ABC;
+      StateModule.set('abcCode', DEFAULT_ABC);
+      RendererModule.render();
+    });
   </script>
 </body>
 </html>
