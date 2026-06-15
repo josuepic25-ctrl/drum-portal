@@ -349,7 +349,7 @@
   </div>
 
   <!-- FAB -->
-  <button id="fab-guide" title="Guía de Notación">📖</button>
+  <button id="fab-guide" title="Guía de Notación" aria-expanded="false" aria-controls="guide-popup">📖</button>
 
   <!-- Guide popup -->
   <div id="guide-popup" role="dialog" aria-modal="true" aria-label="Guía de Notación">
@@ -510,6 +510,7 @@ K:C clef=perc
           const hasWarn  = warnings.length > 0;
 
           if (hasError) {
+            StateModule.set('visualObj', null);
             _setBadge('error', '✕ ' + warnings[0]);
             if (typeof PlaybackModule !== 'undefined') PlaybackModule.enableControls(false);
           } else {
@@ -534,8 +535,8 @@ K:C clef=perc
       let _closeBtn = null;
       let _tabs     = null;
 
-      function _open()  { _popup.classList.add('open');    StateModule.set('guideOpen', true);  }
-      function _close() { _popup.classList.remove('open'); StateModule.set('guideOpen', false); }
+      function _open()  { _popup.classList.add('open');    _fab.setAttribute('aria-expanded', 'true');  StateModule.set('guideOpen', true);  }
+      function _close() { _popup.classList.remove('open'); _fab.setAttribute('aria-expanded', 'false'); StateModule.set('guideOpen', false); }
 
       return {
         init(fabEl, popupEl, closeBtnEl, tabEls) {
@@ -628,11 +629,14 @@ K:C clef=perc
               soundFontUrl: SOUNDFONT_URL,
               chordsOff:    true,
               defaultQpm:   StateModule.get('tempoBpm')
+            },
+            onEnded: function() {
+              _destroySynth();
+              _setPlayState('stopped');
             }
           });
           await _synth.prime();
           _synth.start();
-          _setPlayState('playing');
         } catch (err) {
           console.warn('PlaybackModule error:', err);
           _destroySynth();
@@ -656,9 +660,14 @@ K:C clef=perc
           _inputEl.addEventListener('change', () => _syncTempo(_inputEl.value));
 
           _btnPlay.addEventListener('click', async () => {
-            if (_playState === 'stopped')      { await _startSynth(); }
-            else if (_playState === 'playing') { _synth.pause();  _setPlayState('paused');  }
-            else if (_playState === 'paused')  { _synth.resume(); _setPlayState('playing'); }
+            if (_playState === 'stopped') {
+              _setPlayState('playing');
+              await _startSynth();
+            } else if (_playState === 'playing') {
+              _synth.pause();  _setPlayState('paused');
+            } else if (_playState === 'paused') {
+              _synth.resume(); _setPlayState('playing');
+            }
           });
 
           _btnStop.addEventListener('click', () => {
