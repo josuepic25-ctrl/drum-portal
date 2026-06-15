@@ -753,12 +753,14 @@ K:C clef=perc
     ═══════════════════════════════════════ */
     const PlaybackModule = (() => {
       const SOUNDFONT_URL = 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/';
-      let _synth     = null;
-      let _playState = 'stopped';
-      let _btnPlay   = null;
-      let _btnStop   = null;
-      let _sliderEl  = null;
-      let _inputEl   = null;
+      let _synth          = null;
+      let _audioCtx       = null;  // cached AudioContext for direct suspend/resume
+      let _playState      = 'stopped';
+      let _btnPlay        = null;
+      let _btnStop        = null;
+      let _sliderEl       = null;
+      let _inputEl        = null;
+      let _tempoRenderTimer = null;
 
       function _setPlayState(state) {
         _playState = state;
@@ -793,6 +795,16 @@ K:C clef=perc
           _sliderEl.max = bpm;
         }
         _sliderEl.value = bpm;
+        // Re-render score with updated Q: (200ms debounce)
+        clearTimeout(_tempoRenderTimer);
+        _tempoRenderTimer = setTimeout(() => {
+          const abc = StateModule.get('abcCode');
+          if (abc) {
+            const updated = abc.replace(/^Q:\s*\d+/m, 'Q:' + bpm);
+            StateModule.set('abcCode', updated);
+            if (typeof RendererModule !== 'undefined') RendererModule.render();
+          }
+        }, 200);
       }
 
       function _destroySynth() {
@@ -801,12 +813,13 @@ K:C clef=perc
           try { _synth.destroy(); } catch (e) {}
           _synth = null;
         }
+        _audioCtx = null;
       }
 
       async function _startSynth() {
         _destroySynth();
         const visualObj = StateModule.get('visualObj');
-        if (!visualObj) return;
+        if (!visualObj) { _setPlayState('stopped'); return; }
         _synth = new ABCJS.synth.CreateSynth();
         try {
           await _synth.init({
@@ -821,6 +834,8 @@ K:C clef=perc
               _setPlayState('stopped');
             }
           });
+          // Cache the AudioContext for direct suspend/resume (more reliable than synth wrappers)
+          _audioCtx = _synth.audioContext || null;
           await _synth.prime();
           _synth.start();
           _setPlayState('playing');
@@ -851,14 +866,26 @@ K:C clef=perc
               _setPlayState('loading');
               await _startSynth();
             } else if (_playState === 'playing') {
-              try { await _synth.pause(); } catch(e) {}
+              // Prefer direct AudioContext suspend for reliability
+              const ctx = _audioCtx || (_synth && _synth.audioContext);
+              if (ctx) {
+                try { await ctx.suspend(); } catch(e) {}
+              } else {
+                try { await _synth.pause(); } catch(e) {}
+              }
               _setPlayState('paused');
             } else if (_playState === 'paused') {
-              try {
-                await _synth.resume();
-                _setPlayState('playing');
-              } catch(e) {
-                // fallback: restart from beginning
+              const ctx = _audioCtx || (_synth && _synth.audioContext);
+              if (ctx && ctx.state === 'suspended') {
+                try {
+                  await ctx.resume();
+                  _setPlayState('playing');
+                } catch(e) {
+                  _setPlayState('loading');
+                  await _startSynth();
+                }
+              } else {
+                // AudioContext not suspended (already finished or wrong state) — restart
                 _setPlayState('loading');
                 await _startSynth();
               }
@@ -888,7 +915,7 @@ K:C clef=perc
     ═══════════════════════════════════════ */
     const DrumGridModule = (() => {
       const INSTRUMENTS = [
-        { label: 'Crash',     abbr: 'CR', note: "!x!a'" },
+        { label: 'Crash',     abbr: 'CR', note: "a'" },
         { label: 'Ride',      abbr: 'RD', note: "!x!b'" },
         { label: 'Ride Bell', abbr: 'RB', note: "!diamond!b'" },
         { label: 'Hi-hat ×',  abbr: 'HH', note: '^g' },
