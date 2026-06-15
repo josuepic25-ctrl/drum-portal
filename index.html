@@ -752,7 +752,10 @@ K:C clef=perc
        PLAYBACK MODULE — ABCJS.synth + GM drums
     ═══════════════════════════════════════ */
     const PlaybackModule = (() => {
-      const SOUNDFONT_URL = 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/';
+      // FluidR3_GM includes a full GM percussion bank (channel 10). The previously
+      // used MusyngKite CDN folder has NO percussion samples (every drum note 404s),
+      // which is why playback was silent. Paul Rosen's mirror is the abcjs-recommended host.
+      const SOUNDFONT_URL = 'https://paulrosen.github.io/midi-js-soundfonts/FluidR3_GM/';
       let _synth          = null;
       let _audioCtx       = null;  // cached AudioContext for direct suspend/resume
       let _playState      = 'stopped';
@@ -862,33 +865,12 @@ K:C clef=perc
           _inputEl.addEventListener('change', () => _syncTempo(_inputEl.value));
 
           _btnPlay.addEventListener('click', async () => {
-            if (_playState === 'stopped') {
+            if (_playState === 'stopped' || _playState === 'paused') {
               _setPlayState('loading');
               await _startSynth();
             } else if (_playState === 'playing') {
-              // Prefer direct AudioContext suspend for reliability
-              const ctx = _audioCtx || (_synth && _synth.audioContext);
-              if (ctx) {
-                try { await ctx.suspend(); } catch(e) {}
-              } else {
-                try { await _synth.pause(); } catch(e) {}
-              }
+              _destroySynth();
               _setPlayState('paused');
-            } else if (_playState === 'paused') {
-              const ctx = _audioCtx || (_synth && _synth.audioContext);
-              if (ctx && ctx.state === 'suspended') {
-                try {
-                  await ctx.resume();
-                  _setPlayState('playing');
-                } catch(e) {
-                  _setPlayState('loading');
-                  await _startSynth();
-                }
-              } else {
-                // AudioContext not suspended (already finished or wrong state) — restart
-                _setPlayState('loading');
-                await _startSynth();
-              }
             }
           });
 
@@ -914,17 +896,23 @@ K:C clef=perc
        DRUM GRID MODULE
     ═══════════════════════════════════════ */
     const DrumGridModule = (() => {
+      /* Each instrument maps to a STANDARD drum-notation staff position.
+         `note`  = written ABC pitch (controls vertical position on the staff)
+         `midi`  = GM percussion MIDI note (controls the actual SOUND on playback)
+         `head`  = notehead glyph (x / diamond / null=normal)
+         abcjs %%percmap (built in _buildABC) ties these together so the score
+         looks like a real drum chart AND plays the correct drum sounds. */
       const INSTRUMENTS = [
-        { label: 'Crash',     abbr: 'CR', note: "a'" },
-        { label: 'Ride',      abbr: 'RD', note: "!x!b'" },
-        { label: 'Ride Bell', abbr: 'RB', note: "!diamond!b'" },
-        { label: 'Hi-hat ×',  abbr: 'HH', note: '^g' },
-        { label: 'Hi-hat ○',  abbr: 'HO', note: '!open!^g' },
-        { label: 'Tom Hi',    abbr: 'T1', note: 'e' },
-        { label: 'Tom Mid',   abbr: 'T2', note: 'd' },
-        { label: 'Snare',     abbr: 'SN', note: 'c' },
-        { label: 'Tom Floor', abbr: 'TF', note: 'A' },
-        { label: 'Kick',      abbr: 'KI', note: 'B,' },
+        { label: 'Crash',     abbr: 'CR', note: 'b',  midi: 49, head: 'x'       }, // ledger above staff
+        { label: 'Ride',      abbr: 'RD', note: 'f',  midi: 51, head: 'x'       }, // top line
+        { label: 'Ride Bell', abbr: 'RB', note: '^f', midi: 53, head: 'diamond' }, // top line, ◇
+        { label: 'Hi-hat ×',  abbr: 'HH', note: 'g',  midi: 42, head: 'x'       }, // space above top line
+        { label: 'Hi-hat ○',  abbr: 'HO', note: 'a',  midi: 46, head: 'x'       }, // ledger above (open = higher)
+        { label: 'Tom Hi',    abbr: 'T1', note: 'e',  midi: 48, head: null      }, // 4th space
+        { label: 'Tom Mid',   abbr: 'T2', note: 'd',  midi: 47, head: null      }, // 4th line
+        { label: 'Snare',     abbr: 'SN', note: 'c',  midi: 38, head: null      }, // 3rd space (middle)
+        { label: 'Tom Floor', abbr: 'TF', note: 'A',  midi: 43, head: null      }, // 2nd space
+        { label: 'Kick',      abbr: 'KI', note: 'F',  midi: 36, head: null      }, // 1st space (bottom)
       ];
 
       let _tableEl  = null;
@@ -965,7 +953,14 @@ K:C clef=perc
       function _buildABC() {
         const cols   = _colsPerMeasure();
         const L      = `1/${_subdiv}`;
-        let abc = `X:1\nT:Groove\nM:${_timeSig.num}/${_timeSig.den}\nL:${L}\nQ:${StateModule.get('tempoBpm') || 120}\nK:C clef=perc\n`;
+        // %%percmap lines decouple staff position (written pitch) from the
+        // drum SOUND (GM midi) and notehead glyph — the abcjs way to do drum charts.
+        let percmap = '';
+        for (let i = 0; i < INSTRUMENTS.length; i++) {
+          const ins = INSTRUMENTS[i];
+          percmap += `%%percmap ${ins.note} ${ins.midi}` + (ins.head ? ` ${ins.head}` : '') + '\n';
+        }
+        let abc = `X:1\nT:Groove\nM:${_timeSig.num}/${_timeSig.den}\nL:${L}\nQ:${StateModule.get('tempoBpm') || 120}\n${percmap}K:C clef=perc\n`;
 
         let lineNotes = '';
         for (let m = 0; m < _measures; m++) {
