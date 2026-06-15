@@ -676,9 +676,17 @@ K:C clef=perc
               _setPlayState('loading');
               await _startSynth();
             } else if (_playState === 'playing') {
-              _synth.pause();  _setPlayState('paused');
+              try { await _synth.pause(); } catch(e) {}
+              _setPlayState('paused');
             } else if (_playState === 'paused') {
-              _synth.resume(); _setPlayState('playing');
+              try {
+                await _synth.resume();
+                _setPlayState('playing');
+              } catch(e) {
+                // fallback: restart from beginning
+                _setPlayState('loading');
+                await _startSynth();
+              }
             }
           });
 
