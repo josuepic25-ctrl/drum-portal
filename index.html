@@ -1071,22 +1071,26 @@ K:C clef=perc
           });
           modeToggleBtn.addEventListener('click', () => {
             _abcMode = !_abcMode;
-            const gridScroll = document.getElementById('drum-grid-scroll');
-            const gridControls = document.getElementById('grid-controls');
+            const gridScroll    = document.getElementById('drum-grid-scroll');
+            const gridControls  = document.getElementById('grid-controls');
             if (_abcMode) {
-              gridScroll.style.display = 'none';
-              gridControls.style.display = 'none';
-              textareaEl.style.display = 'flex';
-              textareaEl.style.flex = '1';
-              modeToggleBtn.textContent = 'Grid';
-              modeToggleBtn.title = 'Cambiar a modo Grid';
+              // Populate textarea with current grid ABC so user can read/edit it
+              textareaEl.value = _buildABC();
+              gridScroll.style.display    = 'none';
+              gridControls.style.display  = 'none';
+              textareaEl.style.display    = 'flex';
+              textareaEl.style.flex       = '1';
+              modeToggleBtn.textContent   = 'Grid';
+              modeToggleBtn.title         = 'Cambiar a modo Grid';
             } else {
-              gridScroll.style.display = '';
-              gridControls.style.display = '';
-              textareaEl.style.display = 'none';
-              textareaEl.style.flex = '';
-              modeToggleBtn.textContent = 'ABC';
-              modeToggleBtn.title = 'Cambiar a modo ABC texto';
+              // Return to Grid mode: grid re-generates its own ABC (manual edits discarded)
+              gridScroll.style.display    = '';
+              gridControls.style.display  = '';
+              textareaEl.style.display    = 'none';
+              textareaEl.style.flex       = '';
+              modeToggleBtn.textContent   = 'ABC';
+              modeToggleBtn.title         = 'Cambiar a modo ABC texto';
+              _onGridChange();
             }
           });
 
