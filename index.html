@@ -587,14 +587,25 @@ K:C clef=perc
 
       function _setPlayState(state) {
         _playState = state;
-        if (state === 'playing') {
+        if (state === 'loading') {
+          _btnPlay.textContent = '⏳ …';
+          _btnPlay.disabled = true;
+          _btnStop.disabled = true;
+          _btnPlay.classList.remove('playing');
+        } else if (state === 'playing') {
           _btnPlay.textContent = '⏸ Pause';
+          _btnPlay.disabled = false;
+          _btnStop.disabled = false;
           _btnPlay.classList.add('playing');
         } else if (state === 'paused') {
           _btnPlay.textContent = '▶ Resume';
+          _btnPlay.disabled = false;
+          _btnStop.disabled = false;
           _btnPlay.classList.remove('playing');
         } else {
           _btnPlay.textContent = '▶ Play';
+          _btnPlay.disabled = false;
+          _btnStop.disabled = true;
           _btnPlay.classList.remove('playing');
         }
       }
@@ -637,6 +648,7 @@ K:C clef=perc
           });
           await _synth.prime();
           _synth.start();
+          _setPlayState('playing');
         } catch (err) {
           console.warn('PlaybackModule error:', err);
           _destroySynth();
@@ -661,7 +673,7 @@ K:C clef=perc
 
           _btnPlay.addEventListener('click', async () => {
             if (_playState === 'stopped') {
-              _setPlayState('playing');
+              _setPlayState('loading');
               await _startSynth();
             } else if (_playState === 'playing') {
               _synth.pause();  _setPlayState('paused');
