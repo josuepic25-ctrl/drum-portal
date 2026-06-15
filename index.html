@@ -6,17 +6,20 @@
   <title>Drum Sheet Portal</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap">
-  <script src="https://unpkg.com/abcjs@6.4.4/dist/abcjs-basic.js"></script>
+  <script src="https://unpkg.com/abcjs@6.4.4/dist/abcjs-basic.js" defer></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
+      --header-h:     48px;
       --bg-base:      #0d1117;
       --bg-panel:     #161b22;
       --border:       #30363d;
+      --border-rgb:   48, 54, 61;
       --text-primary: #e6edf3;
       --text-muted:   #8b949e;
       --accent:       #58a6ff;
+      --accent-rgb:   88, 166, 255;
       --success:      #3fb950;
       --warning:      #d29922;
       --error:        #f85149;
@@ -37,7 +40,7 @@
       padding: 0.6rem 1.2rem;
       background: var(--bg-panel);
       border-bottom: 1px solid var(--border);
-      height: 48px;
+      height: var(--header-h);
       flex-shrink: 0;
     }
     #app-header h1 {
@@ -62,7 +65,7 @@
     #app-body {
       display: flex;
       flex-direction: column;
-      height: calc(100vh - 48px);
+      height: calc(100vh - var(--header-h));
       overflow: hidden;
     }
     #layout-container {
@@ -192,7 +195,7 @@
       align-items: center;
       justify-content: center;
       z-index: 1000;
-      box-shadow: 0 4px 16px rgba(88,166,255,0.35);
+      box-shadow: 0 4px 16px rgba(var(--accent-rgb),0.35);
       transition: transform 0.15s;
     }
     #fab-guide:hover { transform: scale(1.08); }
@@ -208,7 +211,7 @@
       background: var(--bg-panel);
       border: 1px solid var(--border);
       border-radius: 10px;
-      z-index: 999;
+      z-index: 1001;
       overflow: hidden;
       box-shadow: 0 8px 32px rgba(0,0,0,0.55);
       flex-direction: column;
@@ -266,9 +269,10 @@
     }
     .guide-table td {
       padding: 5px 6px;
-      border-bottom: 1px solid rgba(48,54,61,0.6);
+      border-bottom: 1px solid rgba(var(--border-rgb),0.6);
       vertical-align: top;
     }
+    .guide-table + .guide-table { margin-top: 0.3rem; }
     .guide-table td code {
       background: var(--bg-base);
       border: 1px solid var(--border);
@@ -335,8 +339,8 @@
           <button id="btn-play" class="pb-btn" disabled>▶ Play</button>
           <button id="btn-stop" class="pb-btn" disabled>⏹ Stop</button>
           <span id="tempo-label">Tempo:</span>
-          <input id="tempo-slider" type="range" min="40" max="240" value="120">
-          <input id="tempo-input"  type="number" min="40" value="120">
+          <input id="tempo-slider" type="range" min="40" max="240" value="120" aria-labelledby="tempo-label">
+          <input id="tempo-input"  type="number" min="40" value="120" aria-labelledby="tempo-label">
           <span id="bpm-label">BPM</span>
         </div>
       </div>
@@ -348,7 +352,7 @@
   <button id="fab-guide" title="Guía de Notación">📖</button>
 
   <!-- Guide popup -->
-  <div id="guide-popup">
+  <div id="guide-popup" role="dialog" aria-modal="true" aria-label="Guía de Notación">
     <div class="guide-header">
       <span>📖 Guía de Notación</span>
       <button class="guide-close" id="guide-close-btn">✕</button>
@@ -405,7 +409,7 @@ K:C clef=perc
           </tbody>
         </table>
         <p class="guide-example-label">Headers de control</p>
-        <table class="guide-table" style="margin-top:0.3rem">
+        <table class="guide-table">
           <thead><tr><th>Header</th><th>Ejemplo</th><th>Efecto</th></tr></thead>
           <tbody>
             <tr><td>Tempo</td>      <td><code>Q:120</code></td> <td>BPM (slider lo sobreescribe en audio)</td></tr>
