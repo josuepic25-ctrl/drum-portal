@@ -394,6 +394,144 @@
     #btn-dot-toggle:hover  { border-color: var(--warning); color: var(--warning); }
     #btn-dot-toggle.active { background: var(--warning); color: #0d1117; border-color: var(--warning); }
 
+    /* ── Score Library Sidebar ─────────────────────────── */
+    #sidebar-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 199;
+    }
+    body.sidebar-open #sidebar-overlay { display: block; }
+
+    #score-sidebar {
+      position: fixed;
+      top: 0; left: 0;
+      width: 280px;
+      height: 100vh;
+      background: var(--bg-panel);
+      border-right: 1px solid var(--border);
+      z-index: 200;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(-100%);
+      transition: transform 0.25s ease;
+    }
+    body.sidebar-open #score-sidebar { transform: translateX(0); }
+
+    .sb-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .sb-title {
+      font-size: 0.78rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--text-muted);
+    }
+    #btn-new-score {
+      background: var(--accent);
+      color: #0d1117;
+      border: none;
+      border-radius: 4px;
+      width: 24px; height: 24px;
+      font-size: 1.1rem;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #btn-new-score:hover { opacity: 0.82; }
+
+    #score-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 0;
+    }
+    .sb-empty {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      padding: 24px 16px;
+      text-align: center;
+      line-height: 1.6;
+    }
+    .score-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 10px;
+      margin: 2px 6px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .score-item:hover { background: rgba(var(--border-rgb), 0.7); }
+    .score-item.active { background: rgba(var(--accent-rgb), 0.14); }
+    .score-item.active .score-name { color: var(--accent); }
+    .score-name {
+      flex: 1;
+      font-size: 0.82rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text-primary);
+    }
+    .score-actions {
+      display: flex;
+      gap: 1px;
+      opacity: 0;
+      transition: opacity 0.1s;
+      flex-shrink: 0;
+    }
+    .score-item:hover .score-actions,
+    .score-item.active .score-actions { opacity: 1; }
+    .sb-action-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 2px 5px;
+      border-radius: 3px;
+      font-size: 0.75rem;
+      line-height: 1;
+      font-family: inherit;
+    }
+    .sb-action-btn:hover { background: var(--border); color: var(--text-primary); }
+    .score-rename-input {
+      flex: 1;
+      min-width: 0;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      border: 1px solid var(--accent);
+      border-radius: 3px;
+      font-family: inherit;
+      font-size: 0.82rem;
+      padding: 1px 5px;
+      outline: none;
+    }
+
+    /* Hamburger button in header */
+    #btn-hamburger {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1.05rem;
+      padding: 4px 7px;
+      border-radius: 4px;
+      line-height: 1;
+      flex-shrink: 0;
+      letter-spacing: -1px;
+    }
+    #btn-hamburger:hover { color: var(--text-primary); background: var(--border); }
+
     /* ── Drum grid table ─────────────────────────────── */
     #drum-grid-scroll {
       flex: 1;
@@ -553,7 +691,20 @@
 </head>
 <body>
 
+  <!-- Score sidebar overlay -->
+  <div id="sidebar-overlay"></div>
+
+  <!-- Score library panel -->
+  <div id="score-sidebar">
+    <div class="sb-header">
+      <span class="sb-title">Mis Partituras</span>
+      <button id="btn-new-score" title="Guardar partitura actual como nueva">＋</button>
+    </div>
+    <div id="score-list"></div>
+  </div>
+
   <div id="app-header">
+    <button id="btn-hamburger" title="Mis partituras guardadas">☰</button>
     <h1>🥁 Drum Sheet Portal</h1>
     <span id="status-badge"></span>
   </div>
@@ -1032,6 +1183,10 @@ K:C clef=perc
       ];
 
       let _tableEl     = null;
+      let _tsNumEl     = null;   // hoisted so setState() can sync them
+      let _tsDenEl     = null;
+      let _measuresEl  = null;
+      let _subdivEl    = null;
       let _timeSig     = { num: 4, den: 4 };
       let _subdiv      = 8;   // 8 or 16 (note value = L:1/_subdiv)
       let _measures    = 2;
@@ -1297,6 +1452,7 @@ K:C clef=perc
         const abc = _buildABC();
         StateModule.set('abcCode', abc);
         RendererModule.render();
+        if (typeof ScoreLibraryModule !== 'undefined') ScoreLibraryModule.autosave();
       }
 
       function _applySettings() {
@@ -1306,7 +1462,11 @@ K:C clef=perc
 
       return {
         init(tableEl, tsNumEl, tsDenEl, measuresEl, subdivEl, clearBtn, modeToggleBtn, textareaEl) {
-          _tableEl = tableEl;
+          _tableEl    = tableEl;
+          _tsNumEl    = tsNumEl;
+          _tsDenEl    = tsDenEl;
+          _measuresEl = measuresEl;
+          _subdivEl   = subdivEl;
           _initCells();
           _renderTable();
 
@@ -1373,7 +1533,184 @@ K:C clef=perc
           StateModule.set('abcCode', abc);
         },
 
-        getABC() { return _buildABC(); }
+        getABC() { return _buildABC(); },
+
+        getState() {
+          return {
+            cells:   JSON.parse(JSON.stringify(_cells)),
+            measures: _measures,
+            subdiv:  _subdiv,
+            timeSig: { ..._timeSig }
+          };
+        },
+
+        setState(st) {
+          _cells   = JSON.parse(JSON.stringify(st.cells));
+          _measures = st.measures;
+          _subdiv  = st.subdiv;
+          _timeSig = { ...st.timeSig };
+          if (_tsNumEl)    _tsNumEl.value    = _timeSig.num;
+          if (_tsDenEl)    _tsDenEl.value    = _timeSig.den;
+          if (_measuresEl) _measuresEl.value = _measures;
+          if (_subdivEl)   _subdivEl.value   = _subdiv;
+          _onGridChange();
+        }
+      };
+    })();
+
+    /* ═══════════════════════════════════════
+       SCORE LIBRARY — localStorage persistence
+    ═══════════════════════════════════════ */
+    const ScoreLibraryModule = (() => {
+      const LS_KEY = 'drum-portal-scores';
+      let _activeId = null;
+      let _getState = null;
+      let _setState = null;
+      let _listEl   = null;
+
+      function _load() {
+        try { return JSON.parse(localStorage.getItem(LS_KEY) || '[]'); }
+        catch { return []; }
+      }
+      function _persist(scores) {
+        localStorage.setItem(LS_KEY, JSON.stringify(scores));
+      }
+      function _uid() {
+        return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+      }
+
+      function _renderList() {
+        if (!_listEl) return;
+        const scores = _load();
+        _listEl.innerHTML = '';
+        if (scores.length === 0) {
+          _listEl.innerHTML = '<p class="sb-empty">Toca ＋ para guardar la partitura actual como nueva</p>';
+          return;
+        }
+        scores.forEach(sc => {
+          const item = document.createElement('div');
+          item.className = 'score-item' + (sc.id === _activeId ? ' active' : '');
+          item.dataset.id = sc.id;
+
+          const nameEl = document.createElement('span');
+          nameEl.className = 'score-name';
+          nameEl.textContent = sc.name;
+          nameEl.addEventListener('click', () => _loadScore(sc.id));
+
+          const actEl = document.createElement('div');
+          actEl.className = 'score-actions';
+
+          function mkBtn(label, title, handler) {
+            const b = document.createElement('button');
+            b.className = 'sb-action-btn';
+            b.textContent = label;
+            b.title = title;
+            b.addEventListener('click', e => { e.stopPropagation(); handler(); });
+            return b;
+          }
+          actEl.append(
+            mkBtn('✏', 'Renombrar', () => _startRename(sc.id, item)),
+            mkBtn('⧉', 'Duplicar',  () => _duplicate(sc.id)),
+            mkBtn('✕', 'Eliminar',  () => _delete(sc.id))
+          );
+          item.append(nameEl, actEl);
+          _listEl.appendChild(item);
+        });
+      }
+
+      function _autosave() {
+        if (!_activeId || !_getState) return;
+        const scores = _load();
+        const idx = scores.findIndex(s => s.id === _activeId);
+        if (idx === -1) return;
+        scores[idx].state     = _getState();
+        scores[idx].updatedAt = Date.now();
+        _persist(scores);
+      }
+
+      function _newScore() {
+        _autosave();
+        const scores = _load();
+        const name = `Partitura ${scores.length + 1}`;
+        const sc = {
+          id: _uid(), name,
+          createdAt: Date.now(), updatedAt: Date.now(),
+          state: _getState ? _getState() : null
+        };
+        scores.unshift(sc);
+        _persist(scores);
+        _activeId = sc.id;
+        _renderList();
+      }
+
+      function _loadScore(id) {
+        _autosave();
+        const scores = _load();
+        const sc = scores.find(s => s.id === id);
+        if (!sc || !sc.state || !_setState) return;
+        _activeId = id;
+        _setState(sc.state);
+        _renderList();
+        document.body.classList.remove('sidebar-open');
+      }
+
+      function _startRename(id, itemEl) {
+        const nameEl = itemEl.querySelector('.score-name');
+        const old    = nameEl.textContent;
+        const input  = document.createElement('input');
+        input.className = 'score-rename-input';
+        input.value = old;
+        nameEl.replaceWith(input);
+        input.focus(); input.select();
+        function commit() {
+          const val = input.value.trim() || old;
+          const scores = _load();
+          const idx = scores.findIndex(s => s.id === id);
+          if (idx !== -1) { scores[idx].name = val; _persist(scores); }
+          _renderList();
+        }
+        input.addEventListener('blur', commit);
+        input.addEventListener('keydown', e => {
+          if (e.key === 'Enter')  { e.preventDefault(); commit(); }
+          if (e.key === 'Escape') { input.value = old; commit(); }
+        });
+      }
+
+      function _duplicate(id) {
+        _autosave();
+        const scores = _load();
+        const sc = scores.find(s => s.id === id);
+        if (!sc) return;
+        const copy = {
+          id: _uid(), name: sc.name + ' (copia)',
+          createdAt: Date.now(), updatedAt: Date.now(),
+          state: JSON.parse(JSON.stringify(sc.state))
+        };
+        const idx = scores.findIndex(s => s.id === id);
+        scores.splice(idx + 1, 0, copy);
+        _persist(scores);
+        _renderList();
+      }
+
+      function _delete(id) {
+        const scores = _load();
+        const sc = scores.find(s => s.id === id);
+        if (!sc) return;
+        if (!confirm(`¿Eliminar "${sc.name}"?`)) return;
+        _persist(scores.filter(s => s.id !== id));
+        if (_activeId === id) _activeId = null;
+        _renderList();
+      }
+
+      return {
+        init(listEl, getState, setState) {
+          _listEl   = listEl;
+          _getState = getState;
+          _setState = setState;
+          _renderList();
+        },
+        newScore()  { _newScore(); },
+        autosave()  { _autosave(); },
       };
     })();
 
@@ -1439,6 +1776,26 @@ K:C clef=perc
           Object.values(mobileTargetMap).forEach(el => el.classList.remove('mobile-visible'));
           mobileTargetMap[tab.dataset.target].classList.add('mobile-visible');
         });
+      });
+
+      /* Init Score Library */
+      ScoreLibraryModule.init(
+        document.getElementById('score-list'),
+        () => DrumGridModule.getState(),
+        (st) => DrumGridModule.setState(st)
+      );
+      document.getElementById('btn-new-score').addEventListener('click', () => {
+        ScoreLibraryModule.newScore();
+      });
+
+      /* Wire hamburger ↔ sidebar */
+      const btnHamburger  = document.getElementById('btn-hamburger');
+      const sidebarOverlay = document.getElementById('sidebar-overlay');
+      btnHamburger.addEventListener('click', () => {
+        document.body.classList.toggle('sidebar-open');
+      });
+      sidebarOverlay.addEventListener('click', () => {
+        document.body.classList.remove('sidebar-open');
       });
 
       /* Initial render from empty grid */
