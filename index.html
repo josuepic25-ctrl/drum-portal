@@ -361,6 +361,22 @@
     }
     .gc-btn-danger:hover { border-color: var(--error); }
 
+    /* ── Duration picker buttons ────────────────────── */
+    .dur-btn {
+      background: var(--bg-base);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      font-family: inherit;
+      white-space: nowrap;
+      transition: color 0.12s, border-color 0.12s, background 0.12s;
+    }
+    .dur-btn:hover  { border-color: var(--accent); color: var(--accent); }
+    .dur-btn.active { background: var(--accent); color: #0d1117; border-color: var(--accent); font-weight: 600; }
+
     /* ── Drum grid table ─────────────────────────────── */
     #drum-grid-scroll {
       flex: 1;
@@ -424,6 +440,21 @@
       background: var(--accent);
       margin: 0 auto;
     }
+    /* Continuation — note from a previous cell extends here */
+    .dg-cell.cont {
+      background: rgba(var(--accent-rgb), 0.06);
+      cursor: pointer;
+    }
+    .dg-cell.cont::after {
+      content: '';
+      display: block;
+      height: 4px;
+      background: var(--accent);
+      border-radius: 0 2px 2px 0;
+      margin: 0;
+      opacity: 0.45;
+    }
+
     /* Rest state — rest symbol */
     .dg-cell.rest::after {
       content: 'z';
@@ -550,6 +581,14 @@
               <option value="8" selected>♪ 8ª</option>
               <option value="16">♬ 16ª</option>
             </select>
+          </div>
+          <div class="gc-group">
+            <span class="gc-label">Figura</span>
+            <button class="dur-btn active" data-frac8="1" title="Corchea (1/8)">♪</button>
+            <button class="dur-btn" data-frac8="2" title="Negra (1/4)">♩</button>
+            <button class="dur-btn" data-frac8="3" title="Negra con puntillo (3/8)">♩·</button>
+            <button class="dur-btn" data-frac8="4" title="Blanca (1/2)">½</button>
+            <button class="dur-btn" data-frac8="6" title="Blanca con puntillo (3/4)">½·</button>
           </div>
           <button id="grid-clear" class="gc-btn-danger" title="Borrar todo">✕ Clear</button>
         </div>
@@ -975,16 +1014,42 @@ K:C clef=perc
         { label: 'Kick',      abbr: 'KI', note: 'F',  midi: 36, head: null      }, // 1st space (bottom)
       ];
 
-      let _tableEl  = null;
-      let _timeSig  = { num: 4, den: 4 };
-      let _subdiv   = 8;   // 8 or 16 (note value = L:1/_subdiv)
-      let _measures = 2;
-      // _cells[measure][col][instIdx] = 'note' | 'rest' | null
+      let _tableEl     = null;
+      let _timeSig     = { num: 4, den: 4 };
+      let _subdiv      = 8;   // 8 or 16 (note value = L:1/_subdiv)
+      let _measures    = 2;
+      let _curDurFrac8 = 1;   // selected duration in eighths (1=8th, 2=quarter, 3=dot-quarter, 4=half, 6=dot-half)
+      // _cells[measure][col][instIdx] = null | 'rest' | { dur: N }
       let _cells    = [];
       let _abcMode  = false; // true = raw ABC textarea visible
 
       function _colsPerMeasure() {
         return Math.round(_timeSig.num * (_subdiv / _timeSig.den));
+      }
+
+      // Current duration in grid cells (adapts to subdivision)
+      function _getDur() {
+        return Math.max(1, Math.round(_curDurFrac8 * (_subdiv / 8)));
+      }
+
+      // Returns {m,c} of the note that "owns" position (m,c,i) due to its duration,
+      // or null if the cell is unoccupied.
+      function _getOccupantCell(m, c, i) {
+        const absC = m * _colsPerMeasure() + c;
+        const cols = _colsPerMeasure();
+        for (let back = 1; back <= 16; back++) {
+          const prevAbs = absC - back;
+          if (prevAbs < 0) break;
+          const pm = Math.floor(prevAbs / cols);
+          const pc = prevAbs % cols;
+          const cell = _cells[pm]?.[pc]?.[i];
+          if (cell && typeof cell === 'object') {
+            return back < cell.dur ? { m: pm, c: pc } : null;
+          }
+          if (cell === 'rest') break; // explicit rest blocks look-back
+          // null → continue looking further back (might be inside a long note)
+        }
+        return null;
       }
 
       function _initCells() {
@@ -1011,40 +1076,89 @@ K:C clef=perc
       }
 
       function _buildABC() {
-        const cols   = _colsPerMeasure();
-        const L      = `1/${_subdiv}`;
-        // %%percmap lines decouple staff position (written pitch) from the
-        // drum SOUND (GM midi) and notehead glyph — the abcjs way to do drum charts.
+        const cols = _colsPerMeasure();
+        const L    = `1/${_subdiv}`;
+
         let percmap = '';
-        for (let i = 0; i < INSTRUMENTS.length; i++) {
-          const ins = INSTRUMENTS[i];
+        for (const ins of INSTRUMENTS) {
           percmap += `%%percmap ${ins.note} ${ins.midi}` + (ins.head ? ` ${ins.head}` : '') + '\n';
         }
-        let abc = `X:1\nT:Groove\nM:${_timeSig.num}/${_timeSig.den}\nL:${L}\nQ:${StateModule.get('tempoBpm') || 120}\n${percmap}K:C clef=perc\n`;
 
-        let lineNotes = '';
-        for (let m = 0; m < _measures; m++) {
-          lineNotes += '|';
-          for (let col = 0; col < cols; col++) {
-            const active = [];
-            for (let i = 0; i < INSTRUMENTS.length; i++) {
-              if (_cells[m][col][i] === 'note') active.push(INSTRUMENTS[i].note);
-            }
-            if (active.length === 0) {
-              lineNotes += 'z';
-            } else if (active.length === 1) {
-              lineNotes += active[0];
-            } else {
-              lineNotes += '[' + active.join('') + ']';
+        const header = [
+          'X:1', 'T:Groove',
+          `M:${_timeSig.num}/${_timeSig.den}`, `L:${L}`,
+          `Q:${StateModule.get('tempoBpm') || 120}`,
+          percmap.trim(),
+          '%%score (V:1 V:2)',   // render both voices on the same percussion staff
+          'K:C clef=perc', ''
+        ].join('\n');
+
+        // Build the ABC event sequence for a subset of instrument indices.
+        // Notes with duration > 1 cell block that instrument from re-triggering.
+        // Multiple simultaneous notes in the same voice → chord, using max duration.
+        function buildVoice(idxs) {
+          const nextFreeAt = {};
+          idxs.forEach(i => nextFreeAt[i] = 0);
+
+          // Collect start-events sorted by absolute column
+          const events = [];
+          for (let m = 0; m < _measures; m++) {
+            for (let c = 0; c < cols; c++) {
+              const absC = m * cols + c;
+              const notesHere = [];
+              for (const i of idxs) {
+                if (nextFreeAt[i] <= absC) {
+                  const cell = _cells[m]?.[c]?.[i];
+                  if (cell && typeof cell === 'object') {
+                    notesHere.push({ note: INSTRUMENTS[i].note, dur: cell.dur });
+                  }
+                }
+              }
+              if (notesHere.length > 0) {
+                const dur = Math.max(...notesHere.map(n => n.dur));
+                for (const i of idxs) {
+                  if (nextFreeAt[i] <= absC && _cells[m]?.[c]?.[i] && typeof _cells[m][c][i] === 'object') {
+                    nextFreeAt[i] = absC + dur;
+                  }
+                }
+                events.push({ absC, notes: notesHere.map(n => n.note), dur });
+              }
             }
           }
-          // Line break every 2 measures for readability
-          if ((m + 1) % 2 === 0 || m === _measures - 1) {
-            abc += lineNotes + '|\n';
-            lineNotes = '';
+
+          // Emit bar-by-bar, filling gaps with rests
+          let voice = '';
+          let evIdx  = 0;
+          for (let m = 0; m < _measures; m++) {
+            voice += '|';
+            const measStart = m * cols;
+            const measEnd   = measStart + cols;
+            let pos = measStart;
+            while (pos < measEnd) {
+              const ev = evIdx < events.length ? events[evIdx] : null;
+              if (ev && ev.absC === pos) {
+                evIdx++;
+                const chord = ev.notes.length === 1 ? ev.notes[0] : '[' + ev.notes.join('') + ']';
+                voice += chord + (ev.dur > 1 ? ev.dur : '');
+                pos   += ev.dur;
+              } else if (ev && ev.absC > pos && ev.absC < measEnd) {
+                const rd = ev.absC - pos;
+                voice += 'z' + (rd > 1 ? rd : '');
+                pos += rd;
+              } else {
+                const rd = measEnd - pos;
+                if (rd > 0) voice += 'z' + (rd > 1 ? rd : '');
+                pos = measEnd;
+              }
+            }
           }
+          voice += '|\n';
+          return voice;
         }
-        return abc;
+
+        return header +
+          'V:1 stem=up\n'   + buildVoice([0, 1, 2, 3, 4]) +   // CR RD RB HH HO
+          'V:2 stem=down\n' + buildVoice([5, 6, 7, 8, 9]);     // T1 T2 SN TF KI
       }
 
       function _renderTable() {
@@ -1073,19 +1187,21 @@ K:C clef=perc
           body += `<tr><td class="dg-row-head">${INSTRUMENTS[i].abbr}</td>`;
           for (let m = 0; m < _measures; m++) {
             for (let c = 0; c < cols; c++) {
-              const state     = _cells[m] && _cells[m][c] ? _cells[m][c][i] : null;
+              const raw       = _cells[m]?.[c]?.[i] ?? null;
+              const isNote    = raw && typeof raw === 'object';
+              const isCont    = !raw && !!_getOccupantCell(m, c, i);
               const beatStart = _isBeatStart(c);
               const measStart = c === 0;
               let cls = 'dg-cell';
-              if (state === 'note') cls += ' note';
-              if (state === 'rest') cls += ' rest';
+              if (isNote)    cls += ' note';
+              else if (raw === 'rest') cls += ' rest';
+              else if (isCont)         cls += ' cont';
               if (beatStart) cls += ' beat-start';
               if (measStart) cls += ' measure-start';
               body += `<td class="${cls}" data-m="${m}" data-c="${c}" data-i="${i}"></td>`;
             }
           }
           body += '</tr>';
-          /* Visual separator after hi-hat group (row 4) and after toms (row 7) */
           if (i === 4 || i === 7) {
             body += `<tr class="dg-row-separator"><td colspan="${totalCols + 1}"></td></tr>`;
           }
@@ -1099,15 +1215,28 @@ K:C clef=perc
           cell.addEventListener('click', (e) => {
             e.preventDefault();
             const m = +cell.dataset.m, c = +cell.dataset.c, i = +cell.dataset.i;
-            const cur = _cells[m][c][i];
-            _cells[m][c][i] = cur === 'note' ? null : 'note';
+            const raw = _cells[m][c][i];
+            if (raw && typeof raw === 'object') {
+              // Toggle off an existing note
+              _cells[m][c][i] = null;
+            } else {
+              // If a previous long note covers this cell, clear that source note instead
+              const occupant = _getOccupantCell(m, c, i);
+              if (occupant) {
+                _cells[occupant.m][occupant.c][i] = null;
+              } else if (raw === null) {
+                // Place new note; clamp duration to measure boundary so notes don't cross bar lines
+                const dur = Math.min(_getDur(), _colsPerMeasure() - c);
+                _cells[m][c][i] = { dur };
+              }
+            }
             _onGridChange();
           });
           cell.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             const m = +cell.dataset.m, c = +cell.dataset.c, i = +cell.dataset.i;
-            const cur = _cells[m][c][i];
-            _cells[m][c][i] = cur === 'rest' ? null : 'rest';
+            const raw = _cells[m][c][i];
+            _cells[m][c][i] = (raw === 'rest') ? null : 'rest';
             _onGridChange();
           });
         });
@@ -1150,6 +1279,15 @@ K:C clef=perc
           clearBtn.addEventListener('click', () => {
             _initCells();
             _onGridChange();
+          });
+
+          /* Duration picker */
+          document.querySelectorAll('.dur-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+              document.querySelectorAll('.dur-btn').forEach(b => b.classList.remove('active'));
+              btn.classList.add('active');
+              _curDurFrac8 = parseInt(btn.dataset.frac8, 10);
+            });
           });
           modeToggleBtn.addEventListener('click', () => {
             _abcMode = !_abcMode;
