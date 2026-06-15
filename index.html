@@ -376,6 +376,23 @@
     }
     .dur-btn:hover  { border-color: var(--accent); color: var(--accent); }
     .dur-btn.active { background: var(--accent); color: #0d1117; border-color: var(--accent); font-weight: 600; }
+    /* Dot toggle — separate visual from duration selection */
+    #btn-dot-toggle {
+      background: var(--bg-base);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 10px;
+      font-size: 1.1rem;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      font-family: inherit;
+      margin-left: 2px;
+      transition: color 0.12s, border-color 0.12s, background 0.12s;
+    }
+    #btn-dot-toggle:hover  { border-color: var(--warning); color: var(--warning); }
+    #btn-dot-toggle.active { background: var(--warning); color: #0d1117; border-color: var(--warning); }
 
     /* ── Drum grid table ─────────────────────────────── */
     #drum-grid-scroll {
@@ -584,11 +601,11 @@
           </div>
           <div class="gc-group">
             <span class="gc-label">Figura</span>
-            <button class="dur-btn active" data-frac8="1" title="Corchea (1/8)">♪</button>
-            <button class="dur-btn" data-frac8="2" title="Negra (1/4)">♩</button>
-            <button class="dur-btn" data-frac8="3" title="Negra con puntillo (3/8)">♩·</button>
-            <button class="dur-btn" data-frac8="4" title="Blanca (1/2)">½</button>
-            <button class="dur-btn" data-frac8="6" title="Blanca con puntillo (3/4)">½·</button>
+            <button class="dur-btn" data-frac16="1" title="Semicorchea (1/16) — requiere subdivisión ×16">♬</button>
+            <button class="dur-btn active" data-frac16="2" title="Corchea (1/8)">♪</button>
+            <button class="dur-btn" data-frac16="4" title="Negra (1/4)">♩</button>
+            <button class="dur-btn" data-frac16="8" title="Blanca (1/2)">½</button>
+            <button id="btn-dot-toggle" title="Puntillo — activa para añadir puntillo a la figura">·</button>
           </div>
           <button id="grid-clear" class="gc-btn-danger" title="Borrar todo">✕ Clear</button>
         </div>
@@ -1018,7 +1035,8 @@ K:C clef=perc
       let _timeSig     = { num: 4, den: 4 };
       let _subdiv      = 8;   // 8 or 16 (note value = L:1/_subdiv)
       let _measures    = 2;
-      let _curDurFrac8 = 1;   // selected duration in eighths (1=8th, 2=quarter, 3=dot-quarter, 4=half, 6=dot-half)
+      let _curDurFrac16 = 2;  // selected duration in 16ths (1=16th, 2=8th, 4=quarter, 8=half, 16=whole)
+      let _isDotted     = false;
       // _cells[measure][col][instIdx] = null | 'rest' | { dur: N }
       let _cells    = [];
       let _abcMode  = false; // true = raw ABC textarea visible
@@ -1027,9 +1045,15 @@ K:C clef=perc
         return Math.round(_timeSig.num * (_subdiv / _timeSig.den));
       }
 
+      // Duration in half-L units (where L = 1/_subdiv). Half-L lets us represent
+      // dotted notes exactly as integers: dotted-8th at L=1/8 → 3 half-L.
+      function _getDurH() {
+        return Math.max(1, Math.round(_curDurFrac16 * (_subdiv / 16) * (_isDotted ? 1.5 : 1) * 2));
+      }
+
       // Current duration in grid cells (adapts to subdivision)
       function _getDur() {
-        return Math.max(1, Math.round(_curDurFrac8 * (_subdiv / 8)));
+        return Math.ceil(_getDurH() / 2);
       }
 
       // Returns {m,c} of the note that "owns" position (m,c,i) due to its duration,
@@ -1077,7 +1101,12 @@ K:C clef=perc
 
       function _buildABC() {
         const cols = _colsPerMeasure();
-        const L    = `1/${_subdiv}`;
+
+        // Always use L:1/32 so every duration (including dotted notes like 3/32)
+        // becomes an integer number of 32nd units — no fractional rests.
+        const L         = '1/32';
+        const cellIn32  = 32 / _subdiv;   // 32nd units per grid cell  (4 at ×8, 2 at ×16)
+        const halfLIn32 = 16 / _subdiv;   // 32nd units per half-L     (2 at ×8, 1 at ×16)
 
         let percmap = '';
         for (const ins of INSTRUMENTS) {
@@ -1089,66 +1118,85 @@ K:C clef=perc
           `M:${_timeSig.num}/${_timeSig.den}`, `L:${L}`,
           `Q:${StateModule.get('tempoBpm') || 120}`,
           percmap.trim(),
-          '%%score (V:1 V:2)',   // render both voices on the same percussion staff
+          '%%score (V:1 V:2)',
           'K:C clef=perc', ''
         ].join('\n');
 
+        // ABC length suffix at L=1/32: 1 unit → '', 4 units → '4', etc.
+        function fmtLen(n) { return n === 1 ? '' : n.toString(); }
+
+        // Representable 32nd-unit values (single dotted/undotted note durations), desc.
+        const REPR32 = [48, 32, 24, 16, 12, 8, 6, 4, 3, 2, 1];
+
+        // Emit a rest of n 32nd-note units, split into representable durations.
+        function emitRest(n) {
+          let s = '';
+          while (n > 0) {
+            const best = REPR32.find(r => r <= n) || 1;
+            s += 'z' + fmtLen(best);
+            n -= best;
+          }
+          return s;
+        }
+
         // Build the ABC event sequence for a subset of instrument indices.
-        // Notes with duration > 1 cell block that instrument from re-triggering.
-        // Multiple simultaneous notes in the same voice → chord, using max duration.
+        // All positions and durations are in 32nd-note units (always integers).
         function buildVoice(idxs) {
           const nextFreeAt = {};
-          idxs.forEach(i => nextFreeAt[i] = 0);
+          idxs.forEach(i => nextFreeAt[i] = 0); // in grid cells
 
-          // Collect start-events sorted by absolute column
+          // Collect start-events
           const events = [];
           for (let m = 0; m < _measures; m++) {
             for (let c = 0; c < cols; c++) {
               const absC = m * cols + c;
+              const absX = absC * cellIn32; // position in 32nd units
               const notesHere = [];
               for (const i of idxs) {
                 if (nextFreeAt[i] <= absC) {
                   const cell = _cells[m]?.[c]?.[i];
                   if (cell && typeof cell === 'object') {
-                    notesHere.push({ note: INSTRUMENTS[i].note, dur: cell.dur });
+                    // Legacy cells without durH use dur * cellIn32 as durX
+                    const durH = cell.durH ?? cell.dur * 2;
+                    const durX = durH * halfLIn32;
+                    notesHere.push({ note: INSTRUMENTS[i].note, dur: cell.dur, durX });
                   }
                 }
               }
               if (notesHere.length > 0) {
-                const dur = Math.max(...notesHere.map(n => n.dur));
+                const dur  = Math.max(...notesHere.map(n => n.dur));
+                const durX = Math.max(...notesHere.map(n => n.durX));
                 for (const i of idxs) {
                   if (nextFreeAt[i] <= absC && _cells[m]?.[c]?.[i] && typeof _cells[m][c][i] === 'object') {
                     nextFreeAt[i] = absC + dur;
                   }
                 }
-                events.push({ absC, notes: notesHere.map(n => n.note), dur });
+                events.push({ absX, notes: notesHere.map(n => n.note), dur, durX });
               }
             }
           }
 
-          // Emit bar-by-bar, filling gaps with rests
+          // Emit bar-by-bar in 32nd units, filling gaps with representable rests
           let voice = '';
           let evIdx  = 0;
           for (let m = 0; m < _measures; m++) {
             voice += '|';
-            const measStart = m * cols;
-            const measEnd   = measStart + cols;
-            let pos = measStart;
-            while (pos < measEnd) {
+            const measStartX = m * cols * cellIn32;
+            const measEndX   = measStartX + cols * cellIn32;
+            let posX = measStartX;
+            while (posX < measEndX) {
               const ev = evIdx < events.length ? events[evIdx] : null;
-              if (ev && ev.absC === pos) {
+              if (ev && ev.absX === posX) {
                 evIdx++;
                 const chord = ev.notes.length === 1 ? ev.notes[0] : '[' + ev.notes.join('') + ']';
-                voice += chord + (ev.dur > 1 ? ev.dur : '');
-                pos   += ev.dur;
-              } else if (ev && ev.absC > pos && ev.absC < measEnd) {
-                const rd = ev.absC - pos;
-                voice += 'z' + (rd > 1 ? rd : '');
-                pos += rd;
+                voice += chord + fmtLen(ev.durX);
+                posX  += ev.durX;
+              } else if (ev && ev.absX > posX && ev.absX < measEndX) {
+                voice += emitRest(ev.absX - posX);
+                posX = ev.absX;
               } else {
-                const rd = measEnd - pos;
-                if (rd > 0) voice += 'z' + (rd > 1 ? rd : '');
-                pos = measEnd;
+                if (measEndX > posX) voice += emitRest(measEndX - posX);
+                posX = measEndX;
               }
             }
           }
@@ -1225,9 +1273,11 @@ K:C clef=perc
               if (occupant) {
                 _cells[occupant.m][occupant.c][i] = null;
               } else if (raw === null) {
-                // Place new note; clamp duration to measure boundary so notes don't cross bar lines
-                const dur = Math.min(_getDur(), _colsPerMeasure() - c);
-                _cells[m][c][i] = { dur };
+                // Place new note; clamp to measure boundary
+                const maxDurH = (_colsPerMeasure() - c) * 2;
+                const durH = Math.min(_getDurH(), maxDurH);
+                const dur  = Math.min(Math.ceil(durH / 2), _colsPerMeasure() - c);
+                _cells[m][c][i] = { dur, durH };
               }
             }
             _onGridChange();
@@ -1286,8 +1336,12 @@ K:C clef=perc
             btn.addEventListener('click', () => {
               document.querySelectorAll('.dur-btn').forEach(b => b.classList.remove('active'));
               btn.classList.add('active');
-              _curDurFrac8 = parseInt(btn.dataset.frac8, 10);
+              _curDurFrac16 = parseInt(btn.dataset.frac16, 10);
             });
+          });
+          document.getElementById('btn-dot-toggle').addEventListener('click', () => {
+            _isDotted = !_isDotted;
+            document.getElementById('btn-dot-toggle').classList.toggle('active', _isDotted);
           });
           modeToggleBtn.addEventListener('click', () => {
             _abcMode = !_abcMode;
