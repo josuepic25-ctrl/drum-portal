@@ -441,13 +441,65 @@
       padding: 0;
     }
 
+    /* ── Grid expand mode (desktop) ─────────────────── */
+    #btn-grid-expand {
+      background: none;
+      color: var(--text-muted);
+      border: 1px solid transparent;
+      border-radius: 4px;
+      padding: 2px 7px;
+      font-size: 0.85rem;
+      line-height: 1;
+      cursor: pointer;
+      font-family: inherit;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    #btn-grid-expand:hover { border-color: var(--border); color: var(--text-primary); }
+    #editor-panel.grid-expanded { flex: 1 1 100% !important; max-width: 100%; }
+    #editor-panel.grid-expanded ~ #render-panel-wrapper { display: none; }
+
+    /* ── Mobile tab bar ─────────────────────────────── */
+    #mobile-tabs { display: none; }
+
     /* ── Responsive (mobile ≤ 767px) ─────────────────── */
     @media (max-width: 767px) {
-      #layout-container  { flex-direction: column; }
-      #editor-panel      { border-right: none; border-bottom: 1px solid var(--border); height: 35vh; flex: none; }
-      #render-panel-wrapper { flex: 1; }
-      #guide-popup       { width: calc(100vw - 2rem); right: 1rem; }
-      #tempo-slider      { width: 80px; }
+      #layout-container { flex-direction: column; }
+
+      /* Tab bar replaces the stacked split */
+      #mobile-tabs {
+        display: flex;
+        background: var(--bg-panel);
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+      .mobile-tab {
+        flex: 1;
+        padding: 0.65rem 0.5rem;
+        font-size: 0.82rem;
+        background: none;
+        border: none;
+        border-bottom: 2px solid transparent;
+        color: var(--text-muted);
+        font-family: inherit;
+        cursor: pointer;
+        transition: color 0.15s;
+      }
+      .mobile-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+      /* Each panel fills the remaining height; only the active one is shown */
+      #editor-panel        { display: none; border-right: none; height: auto; flex: 1; }
+      #render-panel-wrapper { display: none; flex: 1; }
+      #editor-panel.mobile-visible         { display: flex; }
+      #render-panel-wrapper.mobile-visible  { display: flex; flex-direction: column; }
+
+      /* Bigger tap targets inside the grid */
+      .dg-cell       { width: 38px; min-width: 38px; height: 36px; }
+      .dg-col-header { width: 38px; min-width: 38px; }
+      .dg-cell.note::after { width: 18px; height: 18px; }
+      .dg-row-head   { min-width: 44px; width: 44px; font-size: 0.72rem; }
+
+      #guide-popup  { width: calc(100vw - 2rem); right: 1rem; }
+      #tempo-slider { width: 90px; }
     }
   </style>
 </head>
@@ -459,13 +511,21 @@
   </div>
 
   <div id="app-body">
+    <!-- Mobile-only tab bar: switches between grid and score views -->
+    <div id="mobile-tabs">
+      <button class="mobile-tab active" data-target="editor-panel">🥁 Grid</button>
+      <button class="mobile-tab" data-target="render-panel-wrapper">🎵 Partitura</button>
+    </div>
     <div id="layout-container">
 
       <!-- LEFT / TOP: Drum Grid Editor -->
       <div id="editor-panel">
         <div class="panel-label" style="display:flex;align-items:center;justify-content:space-between;">
           <span>Drum Grid</span>
-          <button id="btn-mode-toggle" title="Cambiar a modo ABC texto">ABC</button>
+          <div style="display:flex;gap:4px;align-items:center;">
+            <button id="btn-grid-expand" title="Expandir grid (oculta partitura)">⛶</button>
+            <button id="btn-mode-toggle" title="Cambiar a modo ABC texto">ABC</button>
+          </div>
         </div>
         <!-- Controls row -->
         <div id="grid-controls">
@@ -1162,6 +1222,32 @@ K:C clef=perc
         document.getElementById('guide-close-btn'),
         Array.from(document.querySelectorAll('.guide-tab'))
       );
+
+      /* ── Desktop: expand grid (hides score panel) ── */
+      const editorPanel = document.getElementById('editor-panel');
+      const btnExpand   = document.getElementById('btn-grid-expand');
+      btnExpand.addEventListener('click', () => {
+        const isExpanded = editorPanel.classList.toggle('grid-expanded');
+        btnExpand.textContent = isExpanded ? '⊡' : '⛶';
+        btnExpand.title = isExpanded ? 'Volver a vista dividida' : 'Expandir grid (oculta partitura)';
+      });
+
+      /* ── Mobile: tab switching (Grid ↔ Partitura) ── */
+      const mobileTabs = document.querySelectorAll('.mobile-tab');
+      const mobileTargetMap = {
+        'editor-panel':         document.getElementById('editor-panel'),
+        'render-panel-wrapper': document.getElementById('render-panel-wrapper')
+      };
+      // Start with grid visible on mobile
+      document.getElementById('editor-panel').classList.add('mobile-visible');
+      mobileTabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+          mobileTabs.forEach(t => t.classList.remove('active'));
+          tab.classList.add('active');
+          Object.values(mobileTargetMap).forEach(el => el.classList.remove('mobile-visible'));
+          mobileTargetMap[tab.dataset.target].classList.add('mobile-visible');
+        });
+      });
 
       /* Initial render from empty grid */
       RendererModule.render();
