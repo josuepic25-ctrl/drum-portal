@@ -301,6 +301,146 @@
       color: var(--text-primary);
     }
 
+    /* ── Grid controls ───────────────────────────────── */
+    #grid-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 6px 10px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    .gc-group { display: flex; align-items: center; gap: 4px; }
+    .gc-label { font-size: 0.65rem; color: var(--text-muted); white-space: nowrap; }
+    .gc-num {
+      width: 40px;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 4px;
+      font-size: 0.75rem;
+      font-family: inherit;
+      text-align: center;
+    }
+    .gc-num:focus { outline: none; border-color: var(--accent); }
+    .gc-sep { font-size: 0.8rem; color: var(--text-muted); }
+    .gc-sel {
+      background: var(--bg-base);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 4px;
+      font-size: 0.75rem;
+      font-family: inherit;
+    }
+    .gc-sel:focus { outline: none; border-color: var(--accent); }
+    #btn-mode-toggle {
+      background: var(--bg-base);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 0.68rem;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    #btn-mode-toggle:hover { border-color: var(--accent); color: var(--accent); }
+    .gc-btn-danger {
+      background: none;
+      color: var(--error);
+      border: 1px solid transparent;
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 0.68rem;
+      cursor: pointer;
+      font-family: inherit;
+      margin-left: auto;
+    }
+    .gc-btn-danger:hover { border-color: var(--error); }
+
+    /* ── Drum grid table ─────────────────────────────── */
+    #drum-grid-scroll {
+      flex: 1;
+      overflow: auto;
+      background: var(--bg-base);
+    }
+    #drum-grid {
+      border-collapse: collapse;
+      min-width: 100%;
+      table-layout: fixed;
+    }
+    .dg-row-head {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      background: var(--bg-panel);
+      border-right: 1px solid var(--border);
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      padding: 4px 8px;
+      text-align: right;
+      min-width: 48px;
+      width: 48px;
+    }
+    .dg-col-header {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 3px 1px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      width: 28px;
+      min-width: 28px;
+      user-select: none;
+    }
+    .dg-col-header.beat-start { color: var(--text-primary); font-weight: 500; }
+    .dg-col-header.measure-start { border-left: 2px solid var(--border); }
+    .dg-cell {
+      width: 28px;
+      min-width: 28px;
+      height: 26px;
+      border: 1px solid rgba(var(--border-rgb), 0.4);
+      cursor: pointer;
+      position: relative;
+      background: var(--bg-base);
+      transition: background 0.08s;
+      text-align: center;
+      vertical-align: middle;
+    }
+    .dg-cell:hover { background: rgba(var(--accent-rgb), 0.08); }
+    .dg-cell.beat-start { border-left: 1px solid var(--border); }
+    .dg-cell.measure-start { border-left: 2px solid var(--accent); }
+    /* Note state — filled dot */
+    .dg-cell.note::after {
+      content: '';
+      display: block;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--accent);
+      margin: 0 auto;
+    }
+    /* Rest state — rest symbol */
+    .dg-cell.rest::after {
+      content: 'z';
+      display: block;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      font-style: italic;
+      line-height: 26px;
+    }
+    /* Row separator */
+    .dg-row-separator td {
+      height: 4px;
+      background: var(--bg-panel);
+      border: none;
+      padding: 0;
+    }
+
     /* ── Responsive (mobile ≤ 767px) ─────────────────── */
     @media (max-width: 767px) {
       #layout-container  { flex-direction: column; }
@@ -321,13 +461,48 @@
   <div id="app-body">
     <div id="layout-container">
 
-      <!-- LEFT / TOP: Editor -->
+      <!-- LEFT / TOP: Drum Grid Editor -->
       <div id="editor-panel">
-        <div class="panel-label">Editor ABC</div>
+        <div class="panel-label" style="display:flex;align-items:center;justify-content:space-between;">
+          <span>Drum Grid</span>
+          <button id="btn-mode-toggle" title="Cambiar a modo ABC texto">ABC</button>
+        </div>
+        <!-- Controls row -->
+        <div id="grid-controls">
+          <div class="gc-group">
+            <label class="gc-label">Compás</label>
+            <input id="ts-num" type="number" min="1" max="32" value="4" class="gc-num">
+            <span class="gc-sep">/</span>
+            <select id="ts-den" class="gc-sel">
+              <option value="2">2</option>
+              <option value="4" selected>4</option>
+              <option value="8">8</option>
+              <option value="16">16</option>
+            </select>
+          </div>
+          <div class="gc-group">
+            <label class="gc-label">Compases</label>
+            <input id="grid-measures" type="number" min="1" max="8" value="2" class="gc-num">
+          </div>
+          <div class="gc-group">
+            <label class="gc-label">Subdiv.</label>
+            <select id="grid-subdiv" class="gc-sel">
+              <option value="8" selected>♪ 8ª</option>
+              <option value="16">♬ 16ª</option>
+            </select>
+          </div>
+          <button id="grid-clear" class="gc-btn-danger" title="Borrar todo">✕ Clear</button>
+        </div>
+        <!-- Grid scroll area -->
+        <div id="drum-grid-scroll">
+          <table id="drum-grid" cellspacing="0" cellpadding="0"></table>
+        </div>
+        <!-- Hidden ABC textarea (used by tutor/AI mode) -->
         <textarea id="abc-editor"
           spellcheck="false"
           autocorrect="off"
           autocapitalize="off"
+          style="display:none"
           placeholder="Escribe tu partitura ABC aquí..."></textarea>
       </div>
 
@@ -709,25 +884,229 @@ K:C clef=perc
     })();
 
     /* ═══════════════════════════════════════
+       DRUM GRID MODULE
+    ═══════════════════════════════════════ */
+    const DrumGridModule = (() => {
+      const INSTRUMENTS = [
+        { label: 'Crash',     abbr: 'CR', note: "!x!a'" },
+        { label: 'Ride',      abbr: 'RD', note: "!x!b'" },
+        { label: 'Ride Bell', abbr: 'RB', note: "!diamond!b'" },
+        { label: 'Hi-hat ×',  abbr: 'HH', note: '^g' },
+        { label: 'Hi-hat ○',  abbr: 'HO', note: '!open!^g' },
+        { label: 'Tom Hi',    abbr: 'T1', note: 'e' },
+        { label: 'Tom Mid',   abbr: 'T2', note: 'd' },
+        { label: 'Snare',     abbr: 'SN', note: 'c' },
+        { label: 'Tom Floor', abbr: 'TF', note: 'A' },
+        { label: 'Kick',      abbr: 'KI', note: 'B,' },
+      ];
+
+      let _tableEl  = null;
+      let _timeSig  = { num: 4, den: 4 };
+      let _subdiv   = 8;   // 8 or 16 (note value = L:1/_subdiv)
+      let _measures = 2;
+      // _cells[measure][col][instIdx] = 'note' | 'rest' | null
+      let _cells    = [];
+      let _abcMode  = false; // true = raw ABC textarea visible
+
+      function _colsPerMeasure() {
+        return Math.round(_timeSig.num * (_subdiv / _timeSig.den));
+      }
+
+      function _initCells() {
+        const cols = _colsPerMeasure();
+        _cells = Array.from({ length: _measures }, () =>
+          Array.from({ length: cols }, () => new Array(INSTRUMENTS.length).fill(null))
+        );
+      }
+
+      /* Beat label for a given column (0-indexed within a measure) */
+      function _colLabel(col) {
+        const colsPerBeat = _subdiv / _timeSig.den;
+        const beatIdx     = Math.floor(col / colsPerBeat);
+        const subBeat     = col % colsPerBeat;
+        const SUB_LABELS  = { 1: [''], 2: ['', '+'], 4: ['', 'e', '+', 'a'] };
+        const labels      = SUB_LABELS[colsPerBeat] || null;
+        if (subBeat === 0) return String(beatIdx + 1);
+        return labels ? labels[subBeat] : '';
+      }
+
+      function _isBeatStart(col) {
+        const colsPerBeat = _subdiv / _timeSig.den;
+        return col % colsPerBeat === 0;
+      }
+
+      function _buildABC() {
+        const cols   = _colsPerMeasure();
+        const L      = `1/${_subdiv}`;
+        let abc = `X:1\nT:Groove\nM:${_timeSig.num}/${_timeSig.den}\nL:${L}\nQ:${StateModule.get('tempoBpm') || 120}\nK:C clef=perc\n`;
+
+        let lineNotes = '';
+        for (let m = 0; m < _measures; m++) {
+          lineNotes += '|';
+          for (let col = 0; col < cols; col++) {
+            const active = [];
+            for (let i = 0; i < INSTRUMENTS.length; i++) {
+              if (_cells[m][col][i] === 'note') active.push(INSTRUMENTS[i].note);
+            }
+            if (active.length === 0) {
+              lineNotes += 'z';
+            } else if (active.length === 1) {
+              lineNotes += active[0];
+            } else {
+              lineNotes += '[' + active.join('') + ']';
+            }
+          }
+          // Line break every 2 measures for readability
+          if ((m + 1) % 2 === 0 || m === _measures - 1) {
+            abc += lineNotes + '|\n';
+            lineNotes = '';
+          }
+        }
+        return abc;
+      }
+
+      function _renderTable() {
+        if (!_tableEl) return;
+        const cols      = _colsPerMeasure();
+        const totalCols = cols * _measures;
+
+        /* Header row */
+        let hdr = '<thead><tr><th class="dg-row-head"></th>';
+        for (let m = 0; m < _measures; m++) {
+          for (let c = 0; c < cols; c++) {
+            const label     = _colLabel(c);
+            const beatStart = _isBeatStart(c);
+            const measStart = c === 0;
+            let cls = 'dg-col-header';
+            if (beatStart) cls += ' beat-start';
+            if (measStart) cls += ' measure-start';
+            hdr += `<th class="${cls}">${label}</th>`;
+          }
+        }
+        hdr += '</tr></thead>';
+
+        /* Body rows */
+        let body = '<tbody>';
+        for (let i = 0; i < INSTRUMENTS.length; i++) {
+          body += `<tr><td class="dg-row-head">${INSTRUMENTS[i].abbr}</td>`;
+          for (let m = 0; m < _measures; m++) {
+            for (let c = 0; c < cols; c++) {
+              const state     = _cells[m] && _cells[m][c] ? _cells[m][c][i] : null;
+              const beatStart = _isBeatStart(c);
+              const measStart = c === 0;
+              let cls = 'dg-cell';
+              if (state === 'note') cls += ' note';
+              if (state === 'rest') cls += ' rest';
+              if (beatStart) cls += ' beat-start';
+              if (measStart) cls += ' measure-start';
+              body += `<td class="${cls}" data-m="${m}" data-c="${c}" data-i="${i}"></td>`;
+            }
+          }
+          body += '</tr>';
+          /* Visual separator after hi-hat group (row 4) and after toms (row 7) */
+          if (i === 4 || i === 7) {
+            body += `<tr class="dg-row-separator"><td colspan="${totalCols + 1}"></td></tr>`;
+          }
+        }
+        body += '</tbody>';
+
+        _tableEl.innerHTML = hdr + body;
+
+        /* Attach click + contextmenu listeners */
+        _tableEl.querySelectorAll('.dg-cell').forEach(cell => {
+          cell.addEventListener('click', (e) => {
+            e.preventDefault();
+            const m = +cell.dataset.m, c = +cell.dataset.c, i = +cell.dataset.i;
+            const cur = _cells[m][c][i];
+            _cells[m][c][i] = cur === 'note' ? null : 'note';
+            _onGridChange();
+          });
+          cell.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            const m = +cell.dataset.m, c = +cell.dataset.c, i = +cell.dataset.i;
+            const cur = _cells[m][c][i];
+            _cells[m][c][i] = cur === 'rest' ? null : 'rest';
+            _onGridChange();
+          });
+        });
+      }
+
+      function _onGridChange() {
+        _renderTable();
+        const abc = _buildABC();
+        StateModule.set('abcCode', abc);
+        RendererModule.render();
+      }
+
+      function _applySettings() {
+        _initCells();
+        _onGridChange();
+      }
+
+      return {
+        init(tableEl, tsNumEl, tsDenEl, measuresEl, subdivEl, clearBtn, modeToggleBtn, textareaEl) {
+          _tableEl = tableEl;
+          _initCells();
+          _renderTable();
+
+          tsNumEl.addEventListener('change', () => {
+            const v = parseInt(tsNumEl.value, 10);
+            if (v >= 1 && v <= 32) { _timeSig.num = v; _applySettings(); }
+          });
+          tsDenEl.addEventListener('change', () => {
+            _timeSig.den = parseInt(tsDenEl.value, 10);
+            _applySettings();
+          });
+          measuresEl.addEventListener('change', () => {
+            const v = parseInt(measuresEl.value, 10);
+            if (v >= 1 && v <= 8) { _measures = v; _applySettings(); }
+          });
+          subdivEl.addEventListener('change', () => {
+            _subdiv = parseInt(subdivEl.value, 10);
+            _applySettings();
+          });
+          clearBtn.addEventListener('click', () => {
+            _initCells();
+            _onGridChange();
+          });
+          modeToggleBtn.addEventListener('click', () => {
+            _abcMode = !_abcMode;
+            const gridScroll = document.getElementById('drum-grid-scroll');
+            const gridControls = document.getElementById('grid-controls');
+            if (_abcMode) {
+              gridScroll.style.display = 'none';
+              gridControls.style.display = 'none';
+              textareaEl.style.display = 'flex';
+              textareaEl.style.flex = '1';
+              modeToggleBtn.textContent = 'Grid';
+              modeToggleBtn.title = 'Cambiar a modo Grid';
+            } else {
+              gridScroll.style.display = '';
+              gridControls.style.display = '';
+              textareaEl.style.display = 'none';
+              textareaEl.style.flex = '';
+              modeToggleBtn.textContent = 'ABC';
+              modeToggleBtn.title = 'Cambiar a modo ABC texto';
+            }
+          });
+
+          // Generate initial ABC and render
+          const abc = _buildABC();
+          StateModule.set('abcCode', abc);
+        },
+
+        getABC() { return _buildABC(); }
+      };
+    })();
+
+    /* ═══════════════════════════════════════
        APP INIT — wire everything on load
     ═══════════════════════════════════════ */
     window.addEventListener('load', function AppInit() {
-      const DEFAULT_ABC = [
-        'X:1',
-        'T:Groove básico 4/4',
-        'M:4/4',
-        'L:1/8',
-        'Q:100',
-        'K:C clef=perc',
-        '|B,2 ^g c ^g B,c ^g| B,2 ^g c ^g B,c ^g|',
-        '|B,2 ^g c ^g B,c ^g| B,4 z4              |'
-      ].join('\n');
-
       RendererModule.init(
         document.getElementById('render-panel'),
         document.getElementById('status-badge')
       );
-
       PlaybackModule.init(
         document.getElementById('btn-play'),
         document.getElementById('btn-stop'),
@@ -735,8 +1114,21 @@ K:C clef=perc
         document.getElementById('tempo-input')
       );
 
-      const editorEl = document.getElementById('abc-editor');
-      EditorModule.init(editorEl, () => RendererModule.render());
+      /* Wire textarea to EditorModule (used in ABC mode) */
+      const textareaEl = document.getElementById('abc-editor');
+      EditorModule.init(textareaEl, () => RendererModule.render());
+
+      /* Init DrumGridModule */
+      DrumGridModule.init(
+        document.getElementById('drum-grid'),
+        document.getElementById('ts-num'),
+        document.getElementById('ts-den'),
+        document.getElementById('grid-measures'),
+        document.getElementById('grid-subdiv'),
+        document.getElementById('grid-clear'),
+        document.getElementById('btn-mode-toggle'),
+        textareaEl
+      );
 
       GuideModule.init(
         document.getElementById('fab-guide'),
@@ -745,8 +1137,7 @@ K:C clef=perc
         Array.from(document.querySelectorAll('.guide-tab'))
       );
 
-      editorEl.value = DEFAULT_ABC;
-      StateModule.set('abcCode', DEFAULT_ABC);
+      /* Initial render from empty grid */
       RendererModule.render();
     });
   </script>
