@@ -1318,7 +1318,9 @@ K:C clef=perc
       let _measures    = 2;
       let _curDurFrac16 = 2;  // selected duration in 16ths (1=16th, 2=8th, 4=quarter, 8=half, 16=whole)
       let _isDotted     = false;
-      // _cells[measure][col][instIdx] = null | 'rest' | { dur: N }
+      let _curArt       = null;  // null | 'accent' | 'ghost'  (latching toggle)
+      let _curOrn       = null;  // null | 'flam' | 'drag' | 'ruff' | 'roll'  (single-choice)
+      // _cells[measure][col][instIdx] = null | 'rest' | { dur, durH, art?, orn? }
       let _cells    = [];
       let _abcMode  = false; // true = raw ABC textarea visible
 
@@ -1399,6 +1401,8 @@ K:C clef=perc
           `M:${_timeSig.num}/${_timeSig.den}`, `L:${L}`,
           `Q:${StateModule.get('tempoBpm') || 120}`,
           percmap.trim(),
+          '%%deco (. 0 a 5 1 1 "@-8,-3("',
+          '%%deco ). 0 a 5 1 1 "@4,-3)"',
           '%%score (V:1 V:2)',
           'K:C clef=perc', ''
         ].join('\n');
@@ -1440,7 +1444,7 @@ K:C clef=perc
                     // Legacy cells without durH use dur * cellIn32 as durX
                     const durH = cell.durH ?? cell.dur * 2;
                     const durX = durH * halfLIn32;
-                    notesHere.push({ note: INSTRUMENTS[i].note, dur: cell.dur, durX });
+                    notesHere.push({ note: INSTRUMENTS[i].note, dur: cell.dur, durX, art: cell.art, orn: cell.orn });
                   }
                 }
               }
@@ -1452,7 +1456,12 @@ K:C clef=perc
                     nextFreeAt[i] = absC + dur;
                   }
                 }
-                events.push({ absX, notes: notesHere.map(n => n.note), dur, durX });
+                // First non-null modifier wins for the merged chord event.
+                const art   = notesHere.find(n => n.art)?.art || null;
+                const ornEv = notesHere.find(n => n.orn);
+                const orn   = ornEv?.orn || null;
+                const graceNote = ornEv?.note || notesHere[0].note;
+                events.push({ absX, notes: notesHere.map(n => n.note), dur, durX, art, orn, graceNote });
               }
             }
           }
@@ -1469,8 +1478,17 @@ K:C clef=perc
               const ev = evIdx < events.length ? events[evIdx] : null;
               if (ev && ev.absX === posX) {
                 evIdx++;
+                let prefix = '';
+                const g = ev.graceNote;
+                if (ev.orn === 'flam')      prefix += `{/${g}}`;
+                else if (ev.orn === 'drag') prefix += `{${g}${g}}`;
+                else if (ev.orn === 'ruff') prefix += `{${g}${g}${g}}`;
+                let deco = '';
+                if (ev.art === 'accent')     deco += '!accent!';
+                else if (ev.art === 'ghost') deco += '!(.!!).!';
+                if (ev.orn === 'roll')       deco += '!///!';
                 const chord = ev.notes.length === 1 ? ev.notes[0] : '[' + ev.notes.join('') + ']';
-                voice += chord + fmtLen(ev.durX);
+                voice += prefix + deco + chord + fmtLen(ev.durX);
                 posX  += ev.durX;
               } else if (ev && ev.absX > posX && ev.absX < measEndX) {
                 voice += emitRest(ev.absX - posX);
