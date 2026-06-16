@@ -1564,8 +1564,14 @@ K:C clef=perc
             const m = +cell.dataset.m, c = +cell.dataset.c, i = +cell.dataset.i;
             const raw = _cells[m][c][i];
             if (raw && typeof raw === 'object') {
-              // Toggle off an existing note
-              _cells[m][c][i] = null;
+              if (_curArt || _curOrn) {
+                // A modifier toggle is active → apply/toggle it on the existing note
+                if (_curArt) raw.art = (raw.art === _curArt) ? undefined : _curArt;
+                if (_curOrn) raw.orn = (raw.orn === _curOrn) ? undefined : _curOrn;
+              } else {
+                // Toggle off an existing note
+                _cells[m][c][i] = null;
+              }
             } else {
               // If a previous long note covers this cell, clear that source note instead
               const occupant = _getOccupantCell(m, c, i);
@@ -1576,7 +1582,10 @@ K:C clef=perc
                 const maxDurH = (_colsPerMeasure() - c) * 2;
                 const durH = Math.min(_getDurH(), maxDurH);
                 const dur  = Math.min(Math.ceil(durH / 2), _colsPerMeasure() - c);
-                _cells[m][c][i] = { dur, durH };
+                const note = { dur, durH };
+                if (_curArt) note.art = _curArt;
+                if (_curOrn) note.orn = _curOrn;
+                _cells[m][c][i] = note;
               }
             }
             _onGridChange();
