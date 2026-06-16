@@ -1934,10 +1934,16 @@ K:C clef=perc
 
       // Convert tutor shorthand → full state.
       // Shorthand: { format:"shorthand", timeSig:"4/4", subdiv:8, measures:1,
-      //              tracks:{ HH:"x.x.x.x.", SN:"..x...x.", KI:"x...x..." } }
-      // Each char = one grid column; 'x' = note, '.' = empty.
+      //              tracks:{ HH:"x.x.x.x.", SN:"g.X.x.f.", KI:"x...x..." },
+      //              mods:{ SN:{ "0":{art:"accent",orn:"flam"} } } }
+      // Per-position chars: '.'=silence  'x'=note  'X'=accent  'g'=ghost
+      //                     'f'=flam  'd'=drag  'r'=roll   (ruff via mods)
       function _parseShorthand(data) {
         const ABBR = { CR:0, RD:1, RB:2, HH:3, HO:4, T1:5, T2:6, SN:7, TF:8, KI:9 };
+        const CHAR_MOD = {
+          'x': {}, 'X': { art: 'accent' }, 'g': { art: 'ghost' },
+          'f': { orn: 'flam' }, 'd': { orn: 'drag' }, 'r': { orn: 'roll' }
+        };
         const tsStr  = typeof data.timeSig === 'string' ? data.timeSig
                        : `${data.timeSig.num}/${data.timeSig.den}`;
         const [n, d] = tsStr.split('/').map(Number);
@@ -1951,9 +1957,27 @@ K:C clef=perc
           const idx = ABBR[abbr.toUpperCase()];
           if (idx === undefined) continue;
           for (let pos = 0; pos < Math.min(pat.length, measures * cols); pos++) {
-            if (pat[pos].toLowerCase() === 'x') {
-              cells[Math.floor(pos / cols)][pos % cols][idx] = { dur: 1, durH: 2 };
+            const ch = pat[pos];
+            if (ch === '.' || ch === ' ') continue;
+            const mod = CHAR_MOD[ch] ?? CHAR_MOD[ch.toLowerCase()];
+            if (mod === undefined) {
+              throw new Error(`Carácter desconocido '${ch}' en pista ${abbr}, posición ${pos}`);
             }
+            cells[Math.floor(pos / cols)][pos % cols][idx] = { dur: 1, durH: 2, ...mod };
+          }
+        }
+        for (const [abbr, byCol] of Object.entries(data.mods || {})) {
+          const idx = ABBR[abbr.toUpperCase()];
+          if (idx === undefined) continue;
+          for (const [colStr, ov] of Object.entries(byCol)) {
+            const pos = parseInt(colStr, 10);
+            if (!Number.isInteger(pos) || pos < 0 || pos >= measures * cols) continue;
+            const cell = cells[Math.floor(pos / cols)][pos % cols][idx];
+            if (!cell) {
+              throw new Error(`mods en ${abbr} col ${pos} no tiene nota base`);
+            }
+            if (ov.art) cell.art = ov.art;
+            if (ov.orn) cell.orn = ov.orn;
           }
         }
         return { measures, subdiv, timeSig, cells };
