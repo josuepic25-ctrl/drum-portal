@@ -1460,7 +1460,7 @@ K:C clef=perc
                 const art   = notesHere.find(n => n.art)?.art || null;
                 const ornEv = notesHere.find(n => n.orn);
                 const orn   = ornEv?.orn || null;
-                const graceNote = ornEv?.note || notesHere[0].note;
+                const graceNote = ornEv ? ornEv.note : notesHere[0].note;
                 events.push({ absX, notes: notesHere.map(n => n.note), dur, durX, art, orn, graceNote });
               }
             }
@@ -1483,12 +1483,12 @@ K:C clef=perc
                 if (ev.orn === 'flam')      prefix += `{/${g}}`;
                 else if (ev.orn === 'drag') prefix += `{${g}${g}}`;
                 else if (ev.orn === 'ruff') prefix += `{${g}${g}${g}}`;
-                let deco = '';
+                let deco = '', decoClose = '';
                 if (ev.art === 'accent')     deco += '!accent!';
-                else if (ev.art === 'ghost') deco += '!(.!!).!';
+                else if (ev.art === 'ghost') { deco += '!(.!'; decoClose = '!).!'; }
                 if (ev.orn === 'roll')       deco += '!///!';
                 const chord = ev.notes.length === 1 ? ev.notes[0] : '[' + ev.notes.join('') + ']';
-                voice += prefix + deco + chord + fmtLen(ev.durX);
+                voice += prefix + deco + chord + fmtLen(ev.durX) + decoClose;
                 posX  += ev.durX;
               } else if (ev && ev.absX > posX && ev.absX < measEndX) {
                 voice += emitRest(ev.absX - posX);
