@@ -1855,9 +1855,38 @@ K:C clef=perc
         } catch(e) { alert('Error generando enlace: ' + e.message); }
       }
 
+      // Convert tutor shorthand → full state.
+      // Shorthand: { format:"shorthand", timeSig:"4/4", subdiv:8, measures:1,
+      //              tracks:{ HH:"x.x.x.x.", SN:"..x...x.", KI:"x...x..." } }
+      // Each char = one grid column; 'x' = note, '.' = empty.
+      function _parseShorthand(data) {
+        const ABBR = { CR:0, RD:1, RB:2, HH:3, HO:4, T1:5, T2:6, SN:7, TF:8, KI:9 };
+        const tsStr  = typeof data.timeSig === 'string' ? data.timeSig
+                       : `${data.timeSig.num}/${data.timeSig.den}`;
+        const [n, d] = tsStr.split('/').map(Number);
+        const timeSig = { num: n, den: d };
+        const subdiv   = data.subdiv  || 8;
+        const measures = data.measures || 1;
+        const cols = Math.round(n * subdiv / d);
+        const cells = Array.from({ length: measures }, () =>
+          Array.from({ length: cols }, () => Array(10).fill(null)));
+        for (const [abbr, pat] of Object.entries(data.tracks || {})) {
+          const idx = ABBR[abbr.toUpperCase()];
+          if (idx === undefined) continue;
+          for (let pos = 0; pos < Math.min(pat.length, measures * cols); pos++) {
+            if (pat[pos].toLowerCase() === 'x') {
+              cells[Math.floor(pos / cols)][pos % cols][idx] = { dur: 1, durH: 2 };
+            }
+          }
+        }
+        return { measures, subdiv, timeSig, cells };
+      }
+
       function _importJSON(jsonStr) {
         try {
           const data = JSON.parse(jsonStr);
+          // Accept shorthand format from the drum tutor
+          if (data.format === 'shorthand') data.state = _parseShorthand(data);
           if (!data.state) throw new Error('Falta el campo "state"');
           if (!Array.isArray(data.state.cells)) throw new Error('Falta "state.cells"');
           const sc = {
