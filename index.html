@@ -884,6 +884,18 @@
             <button class="dur-btn" data-frac16="8" title="Blanca (1/2)">½</button>
             <button id="btn-dot-toggle" title="Puntillo — activa para añadir puntillo a la figura">·</button>
           </div>
+          <div class="gc-group">
+            <span class="gc-label">Articulación</span>
+            <button id="btn-art-accent" class="dur-btn" title="Acento (nota más fuerte)">&gt;</button>
+            <button id="btn-art-ghost" class="dur-btn" title="Ghost note (nota fantasma, más suave)">( )</button>
+          </div>
+          <div class="gc-group">
+            <span class="gc-label">Ornamento</span>
+            <button id="btn-orn-flam" class="dur-btn" title="Flam (una nota de gracia)">Flam</button>
+            <button id="btn-orn-drag" class="dur-btn" title="Drag (dos notas de gracia)">Drag</button>
+            <button id="btn-orn-ruff" class="dur-btn" title="Ruff (tres notas de gracia)">Ruff</button>
+            <button id="btn-orn-roll" class="dur-btn" title="Roll (redoble / trémolo)">Roll</button>
+          </div>
           <button id="grid-clear" class="gc-btn-danger" title="Borrar todo">✕ Clear</button>
         </div>
         <!-- Grid scroll area -->
@@ -1644,10 +1656,10 @@ K:C clef=perc
             _onGridChange();
           });
 
-          /* Duration picker */
-          document.querySelectorAll('.dur-btn').forEach(btn => {
+          /* Duration picker — only buttons with data-frac16 belong here */
+          document.querySelectorAll('.dur-btn[data-frac16]').forEach(btn => {
             btn.addEventListener('click', () => {
-              document.querySelectorAll('.dur-btn').forEach(b => b.classList.remove('active'));
+              document.querySelectorAll('.dur-btn[data-frac16]').forEach(b => b.classList.remove('active'));
               btn.classList.add('active');
               _curDurFrac16 = parseInt(btn.dataset.frac16, 10);
             });
@@ -1655,6 +1667,27 @@ K:C clef=perc
           document.getElementById('btn-dot-toggle').addEventListener('click', () => {
             _isDotted = !_isDotted;
             document.getElementById('btn-dot-toggle').classList.toggle('active', _isDotted);
+          });
+
+          /* Articulation toggles — accent and ghost are mutually exclusive */
+          function _setArt(val) {
+            _curArt = (_curArt === val) ? null : val;
+            document.getElementById('btn-art-accent').classList.toggle('active', _curArt === 'accent');
+            document.getElementById('btn-art-ghost').classList.toggle('active', _curArt === 'ghost');
+          }
+          document.getElementById('btn-art-accent').addEventListener('click', () => _setArt('accent'));
+          document.getElementById('btn-art-ghost').addEventListener('click', () => _setArt('ghost'));
+
+          /* Ornament selector — single choice */
+          const ORN_BTNS = { flam: 'btn-orn-flam', drag: 'btn-orn-drag', ruff: 'btn-orn-ruff', roll: 'btn-orn-roll' };
+          function _setOrn(val) {
+            _curOrn = (_curOrn === val) ? null : val;
+            for (const [k, id] of Object.entries(ORN_BTNS)) {
+              document.getElementById(id).classList.toggle('active', _curOrn === k);
+            }
+          }
+          Object.entries(ORN_BTNS).forEach(([k, id]) => {
+            document.getElementById(id).addEventListener('click', () => _setOrn(k));
           });
           modeToggleBtn.addEventListener('click', () => {
             _abcMode = !_abcMode;
