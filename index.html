@@ -1400,7 +1400,9 @@ K:C clef=perc
       let _curArt       = null;  // null | 'accent' | 'ghost'  (latching toggle)
       let _curOrn       = null;  // null | 'flam' | 'drag' | 'ruff'   (roll removed)
       let _curRoll      = null;  // null | { type, accentRelease }  (selección activa del picker de roll)
-      // _cells[measure][col][instIdx] = null | 'rest' | { dur, durH, art?, orn? }
+      // _cells[measure] = [ beatGroup, ... ]   (un grupo por beat del compás)
+      // beatGroup = { kind:'straight'|'triplet', div:Number, cells: Cell[div][instIdx] }
+      // Cell = null | 'rest' | { dur, durH, art?, orn?, roll? }
       let _cells    = [];
       let _abcMode  = false; // true = raw ABC textarea visible
 
@@ -1419,47 +1421,46 @@ K:C clef=perc
         return Math.ceil(_getDurH() / 2);
       }
 
-      // Returns {m,c} of the note that "owns" position (m,c,i) due to its duration,
-      // or null if the cell is unoccupied.
-      function _getOccupantCell(m, c, i) {
-        const absC = m * _colsPerMeasure() + c;
-        const cols = _colsPerMeasure();
-        for (let back = 1; back <= 16; back++) {
-          const prevAbs = absC - back;
-          if (prevAbs < 0) break;
-          const pm = Math.floor(prevAbs / cols);
-          const pc = prevAbs % cols;
-          const cell = _cells[pm]?.[pc]?.[i];
+      // ── Subdivisión por beat (Fase tresillos) ──
+      function _beatsPerMeasure() { return _timeSig.num; }
+      function _straightDiv()   { return Math.round(_subdiv / _timeSig.den); }
+      function _tripletDiv()    { return Math.round(_straightDiv() * 3 / 2); }
+      function _makeBeat(kind) {
+        const div = kind === 'triplet' ? _tripletDiv() : _straightDiv();
+        return {
+          kind,
+          div,
+          cells: Array.from({ length: div }, () => new Array(INSTRUMENTS.length).fill(null))
+        };
+      }
+
+      // Returns {c} of the note that "owns" position (m,b,c,i) due to its duration,
+      // or null if the cell is unoccupied. Notes are scoped to their beat.
+      function _getOccupantCell(m, b, c, i) {
+        const group = _cells[m]?.[b];
+        if (!group) return null;
+        for (let pc = c - 1; pc >= 0; pc--) {
+          const cell = group.cells[pc]?.[i];
           if (cell && typeof cell === 'object') {
-            return back < cell.dur ? { m: pm, c: pc } : null;
+            return (c - pc) < cell.dur ? { c: pc } : null;
           }
-          if (cell === 'rest') break; // explicit rest blocks look-back
-          // null → continue looking further back (might be inside a long note)
+          if (cell === 'rest') break;
         }
         return null;
       }
 
       function _initCells() {
-        const cols = _colsPerMeasure();
+        const beats = _beatsPerMeasure();
         _cells = Array.from({ length: _measures }, () =>
-          Array.from({ length: cols }, () => new Array(INSTRUMENTS.length).fill(null))
+          Array.from({ length: beats }, () => _makeBeat('straight'))
         );
       }
 
-      /* Beat label for a given column (0-indexed within a measure) */
-      function _colLabel(col) {
-        const colsPerBeat = _subdiv / _timeSig.den;
-        const beatIdx     = Math.floor(col / colsPerBeat);
-        const subBeat     = col % colsPerBeat;
-        const SUB_LABELS  = { 1: [''], 2: ['', '+'], 4: ['', 'e', '+', 'a'] };
-        const labels      = SUB_LABELS[colsPerBeat] || null;
-        if (subBeat === 0) return String(beatIdx + 1);
-        return labels ? labels[subBeat] : '';
-      }
-
-      function _isBeatStart(col) {
-        const colsPerBeat = _subdiv / _timeSig.den;
-        return col % colsPerBeat === 0;
+      function _cellLabel(beatNum, c, div, kind) {
+        if (c === 0) return String(beatNum);
+        if (kind === 'triplet') return div === 3 ? ['', 'tr', 'let'][c] : '';
+        const SUB = { 2: ['', '+'], 4: ['', 'e', '+', 'a'] };
+        return (SUB[div] || [])[c] || '';
       }
 
       function _buildABC() {
@@ -1502,96 +1503,117 @@ K:C clef=perc
           return s;
         }
 
-        // Build the ABC event sequence for a subset of instrument indices.
-        // All positions and durations are in 32nd-note units (always integers).
-        function buildVoice(idxs) {
-          const nextFreeAt = {};
-          idxs.forEach(i => nextFreeAt[i] = 0); // in grid cells
+        function emitBeat(group, idxs) {
+          const div       = group.div;
+          const faceUnit  = cellIn32;
+          const beatFace  = div * faceUnit;
+          const realUnits = Math.round(32 / _timeSig.den);
 
-          // Collect start-events
+          const nextFreeAt = {};
+          idxs.forEach(i => nextFreeAt[i] = 0);
           const events = [];
-          for (let m = 0; m < _measures; m++) {
-            for (let c = 0; c < cols; c++) {
-              const absC = m * cols + c;
-              const absX = absC * cellIn32; // position in 32nd units
-              const notesHere = [];
+          for (let c = 0; c < div; c++) {
+            const posF = c * faceUnit;
+            const notesHere = [];
+            for (const i of idxs) {
+              if (nextFreeAt[i] <= c) {
+                const cell = group.cells[c]?.[i];
+                if (cell && typeof cell === 'object') {
+                  const durH = cell.durH ?? cell.dur * 2;
+                  const durX = durH * halfLIn32;
+                  notesHere.push({ note: INSTRUMENTS[i].note, dur: cell.dur, durX, art: cell.art, orn: cell.orn, roll: cell.roll });
+                }
+              }
+            }
+            if (notesHere.length > 0) {
+              const dur  = Math.max(...notesHere.map(n => n.dur));
+              const durX = Math.max(...notesHere.map(n => n.durX));
               for (const i of idxs) {
-                if (nextFreeAt[i] <= absC) {
-                  const cell = _cells[m]?.[c]?.[i];
-                  if (cell && typeof cell === 'object') {
-                    // Legacy cells without durH use dur * cellIn32 as durX
-                    const durH = cell.durH ?? cell.dur * 2;
-                    const durX = durH * halfLIn32;
-                    notesHere.push({ note: INSTRUMENTS[i].note, dur: cell.dur, durX, art: cell.art, orn: cell.orn, roll: cell.roll });
-                  }
+                if (nextFreeAt[i] <= c && group.cells[c]?.[i] && typeof group.cells[c][i] === 'object') {
+                  nextFreeAt[i] = c + dur;
                 }
               }
-              if (notesHere.length > 0) {
-                const dur  = Math.max(...notesHere.map(n => n.dur));
-                const durX = Math.max(...notesHere.map(n => n.durX));
-                for (const i of idxs) {
-                  if (nextFreeAt[i] <= absC && _cells[m]?.[c]?.[i] && typeof _cells[m][c][i] === 'object') {
-                    nextFreeAt[i] = absC + dur;
-                  }
-                }
-                // First non-null modifier wins for the merged chord event.
-                const art    = notesHere.find(n => n.art)?.art || null;
-                const ornEv  = notesHere.find(n => n.orn);
-                const orn    = ornEv?.orn || null;
-                const rollEv = notesHere.find(n => n.roll);
-                const roll   = rollEv?.roll || null;
-                const graceNote = ornEv ? ornEv.note : notesHere[0].note;
-                events.push({ absX, notes: notesHere.map(n => n.note), dur, durX, art, orn, roll, graceNote });
-              }
+              const art    = notesHere.find(n => n.art)?.art || null;
+              const ornEv  = notesHere.find(n => n.orn);
+              const orn    = ornEv?.orn || null;
+              const rollEv = notesHere.find(n => n.roll);
+              const roll   = rollEv?.roll || null;
+              const graceNote = ornEv ? ornEv.note : notesHere[0].note;
+              events.push({ posF, notes: notesHere.map(n => n.note), dur, durX, art, orn, roll, graceNote });
             }
           }
 
-          // Emit bar-by-bar in 32nd units, filling gaps with representable rests
+          if (events.length === 0) return emitRest(realUnits);
+
+          let inner = '';
+          let count = 0;
+          let posF  = 0;
+          let evIdx = 0;
+          const restCounted = (n) => {
+            while (n > 0) {
+              const best = REPR32.find(r => r <= n) || 1;
+              inner += 'z' + fmtLen(best);
+              count++;
+              n -= best;
+            }
+          };
+          while (posF < beatFace) {
+            const ev = evIdx < events.length ? events[evIdx] : null;
+            if (ev && ev.posF === posF) {
+              evIdx++;
+              let prefix = '';
+              const g = ev.graceNote;
+              if (ev.orn === 'flam')      prefix += `{/${g}}`;
+              else if (ev.orn === 'drag') prefix += `{${g}${g}}`;
+              else if (ev.orn === 'ruff') prefix += `{${g}${g}${g}}`;
+              let deco = '', decoClose = '';
+              if (ev.art === 'accent')     deco += '!accent!';
+              else if (ev.art === 'ghost') { deco += '!(.!'; decoClose = '!).!'; }
+              const chord = ev.notes.length === 1 ? ev.notes[0] : '[' + ev.notes.join('') + ']';
+              const durX  = Math.min(ev.durX, beatFace - posF);
+              if (ev.roll) {
+                const sizes = _expandRoll(durX, ev.roll.type);
+                const def   = ROLL_TYPES[ev.roll.type] || ROLL_TYPES.buzz;
+                const last  = sizes.length - 1;
+                const accRelease = ev.roll.accentRelease && def.strokes != null;
+                for (let h = 0; h < sizes.length; h++) {
+                  const isFirst = h === 0;
+                  const pre    = isFirst ? prefix : '';
+                  const dOpen  = isFirst ? deco : '';
+                  const dClose = isFirst ? decoClose : '';
+                  const trem   = isFirst ? `!trem${def.trem}!` : '';
+                  const acc    = (h === last && accRelease) ? '!accent!' : '';
+                  inner += pre + dOpen + acc + trem + chord + fmtLen(sizes[h]) + dClose;
+                  count++;
+                }
+              } else {
+                inner += prefix + deco + chord + fmtLen(durX) + decoClose;
+                count++;
+              }
+              posF += durX;
+            } else if (ev && ev.posF > posF) {
+              restCounted(ev.posF - posF);
+              posF = ev.posF;
+            } else {
+              restCounted(beatFace - posF);
+              posF = beatFace;
+            }
+          }
+
+          if (group.kind === 'triplet') {
+            const q = Math.round(div * 2 / 3);
+            return `(${div}:${q}:${count}` + inner;
+          }
+          return inner;
+        }
+
+        function buildVoice(idxs) {
           let voice = '';
-          let evIdx  = 0;
           for (let m = 0; m < _measures; m++) {
             voice += '|';
-            const measStartX = m * cols * cellIn32;
-            const measEndX   = measStartX + cols * cellIn32;
-            let posX = measStartX;
-            while (posX < measEndX) {
-              const ev = evIdx < events.length ? events[evIdx] : null;
-              if (ev && ev.absX === posX) {
-                evIdx++;
-                let prefix = '';
-                const g = ev.graceNote;
-                if (ev.orn === 'flam')      prefix += `{/${g}}`;
-                else if (ev.orn === 'drag') prefix += `{${g}${g}}`;
-                else if (ev.orn === 'ruff') prefix += `{${g}${g}${g}}`;
-                let deco = '', decoClose = '';
-                if (ev.art === 'accent')     deco += '!accent!';
-                else if (ev.art === 'ghost') { deco += '!(.!'; decoClose = '!).!'; }
-                const chord = ev.notes.length === 1 ? ev.notes[0] : '[' + ev.notes.join('') + ']';
-                if (ev.roll) {
-                  const sizes = _expandRoll(ev.durX, ev.roll.type);
-                  const def   = ROLL_TYPES[ev.roll.type] || ROLL_TYPES.buzz;
-                  const last  = sizes.length - 1;
-                  const accRelease = ev.roll.accentRelease && def.strokes != null;
-                  for (let h = 0; h < sizes.length; h++) {
-                    const isFirst = h === 0;
-                    const pre    = isFirst ? prefix : '';
-                    const dOpen  = isFirst ? deco : '';
-                    const dClose = isFirst ? decoClose : '';
-                    const trem   = isFirst ? `!trem${def.trem}!` : '';
-                    const acc    = (h === last && accRelease) ? '!accent!' : '';
-                    voice += pre + dOpen + acc + trem + chord + fmtLen(sizes[h]) + dClose;
-                  }
-                } else {
-                  voice += prefix + deco + chord + fmtLen(ev.durX) + decoClose;
-                }
-                posX  += ev.durX;
-              } else if (ev && ev.absX > posX && ev.absX < measEndX) {
-                voice += emitRest(ev.absX - posX);
-                posX = ev.absX;
-              } else {
-                if (measEndX > posX) voice += emitRest(measEndX - posX);
-                posX = measEndX;
-              }
+            const beats = _cells[m] || [];
+            for (let b = 0; b < beats.length; b++) {
+              voice += emitBeat(beats[b], idxs);
             }
           }
           voice += '|\n';
@@ -1605,52 +1627,62 @@ K:C clef=perc
 
       function _renderTable() {
         if (!_tableEl) return;
-        const cols      = _colsPerMeasure();
-        const totalCols = cols * _measures;
 
-        /* Header row */
-        let hdr = '<thead><tr><th class="dg-row-head"></th>';
+        const flat = [];
+        let beatNum = 0;
         for (let m = 0; m < _measures; m++) {
-          for (let c = 0; c < cols; c++) {
-            const label     = _colLabel(c);
-            const beatStart = _isBeatStart(c);
-            const measStart = c === 0;
-            let cls = 'dg-col-header';
-            if (beatStart) cls += ' beat-start';
-            if (measStart) cls += ' measure-start';
-            hdr += `<th class="${cls}">${label}</th>`;
+          const beats = _cells[m] || [];
+          for (let b = 0; b < beats.length; b++) {
+            beatNum++;
+            const group = beats[b];
+            for (let c = 0; c < group.div; c++) {
+              flat.push({
+                m, b, c, div: group.div, kind: group.kind, beatNum,
+                beatStart: c === 0,
+                measStart: b === 0 && c === 0
+              });
+            }
           }
+        }
+        const totalCols = flat.length;
+
+        let hdr = '<thead><tr><th class="dg-row-head"></th>';
+        for (const col of flat) {
+          let cls = 'dg-col-header';
+          if (col.beatStart) cls += ' beat-start';
+          if (col.measStart) cls += ' measure-start';
+          if (col.kind === 'triplet') cls += ' triplet-beat';
+          const label = _cellLabel(col.beatNum, col.c, col.div, col.kind);
+          const badge = (col.kind === 'triplet' && col.c === 0) ? '<span class="trip-badge">3</span>' : '';
+          hdr += `<th class="${cls}">${badge}${label}</th>`;
         }
         hdr += '</tr></thead>';
 
-        /* Body rows */
         let body = '<tbody>';
         for (let i = 0; i < INSTRUMENTS.length; i++) {
           body += `<tr><td class="dg-row-head">${INSTRUMENTS[i].abbr}</td>`;
-          for (let m = 0; m < _measures; m++) {
-            for (let c = 0; c < cols; c++) {
-              const raw       = _cells[m]?.[c]?.[i] ?? null;
-              const isNote    = raw && typeof raw === 'object';
-              const isCont    = !raw && !!_getOccupantCell(m, c, i);
-              const beatStart = _isBeatStart(c);
-              const measStart = c === 0;
-              let cls = 'dg-cell';
-              if (isNote)    cls += ' note';
-              else if (raw === 'rest') cls += ' rest';
-              else if (isCont)         cls += ' cont';
-              if (beatStart) cls += ' beat-start';
-              if (measStart) cls += ' measure-start';
-              let inner = '';
-              if (isNote) {
-                if (raw.art === 'accent')     cls += ' art-accent';
-                else if (raw.art === 'ghost') cls += ' art-ghost';
-                let tag = '';
-                if (raw.roll)     tag = (ROLL_TYPES[raw.roll.type] || {}).tag || 'R';
-                else if (raw.orn) tag = ({ flam: 'F', drag: 'D', ruff: 'Rf' })[raw.orn] || '';
-                if (tag) inner = `<span class="orn-tag">${tag}</span>`;
-              }
-              body += `<td class="${cls}" data-m="${m}" data-c="${c}" data-i="${i}">${inner}</td>`;
+          for (const col of flat) {
+            const group  = _cells[col.m][col.b];
+            const raw    = group.cells[col.c]?.[i] ?? null;
+            const isNote = raw && typeof raw === 'object';
+            const isCont = !raw && !!_getOccupantCell(col.m, col.b, col.c, i);
+            let cls = 'dg-cell';
+            if (isNote)              cls += ' note';
+            else if (raw === 'rest') cls += ' rest';
+            else if (isCont)         cls += ' cont';
+            if (col.beatStart)       cls += ' beat-start';
+            if (col.measStart)       cls += ' measure-start';
+            if (col.kind === 'triplet') cls += ' triplet-beat';
+            let inner = '';
+            if (isNote) {
+              if (raw.art === 'accent')     cls += ' art-accent';
+              else if (raw.art === 'ghost') cls += ' art-ghost';
+              let tag = '';
+              if (raw.roll)     tag = (ROLL_TYPES[raw.roll.type] || {}).tag || 'R';
+              else if (raw.orn) tag = ({ flam: 'F', drag: 'D', ruff: 'Rf' })[raw.orn] || '';
+              if (tag) inner = `<span class="orn-tag">${tag}</span>`;
             }
+            body += `<td class="${cls}" data-m="${col.m}" data-b="${col.b}" data-c="${col.c}" data-i="${i}">${inner}</td>`;
           }
           body += '</tr>';
           if (i === 4 || i === 7) {
@@ -1660,65 +1692,97 @@ K:C clef=perc
         body += '</tbody>';
 
         _tableEl.innerHTML = hdr + body;
+        _attachCellListeners();
+      }
 
-        /* Attach click + contextmenu listeners */
+      function _attachCellListeners() {
         _tableEl.querySelectorAll('.dg-cell').forEach(cell => {
           cell.addEventListener('click', (e) => {
             e.preventDefault();
-            const m = +cell.dataset.m, c = +cell.dataset.c, i = +cell.dataset.i;
-            const raw = _cells[m][c][i];
+            const m = +cell.dataset.m, b = +cell.dataset.b, c = +cell.dataset.c, i = +cell.dataset.i;
+            const group = _cells[m][b];
+            const raw = group.cells[c][i];
             if (raw && typeof raw === 'object') {
               if (_curArt || _curOrn || _curRoll) {
-                // A modifier toggle is active → apply/toggle it on the existing note
                 if (_curArt)  raw.art  = (raw.art === _curArt) ? undefined : _curArt;
                 if (_curOrn)  raw.orn  = (raw.orn === _curOrn) ? undefined : _curOrn;
                 if (_curRoll) raw.roll = (raw.roll && raw.roll.type === _curRoll.type) ? undefined : { ..._curRoll };
               } else {
-                // Toggle off an existing note
-                _cells[m][c][i] = null;
+                group.cells[c][i] = null;
               }
             } else {
-              // If a previous long note covers this cell, clear that source note instead
-              const occupant = _getOccupantCell(m, c, i);
+              const occupant = _getOccupantCell(m, b, c, i);
               if (occupant) {
-                _cells[occupant.m][occupant.c][i] = null;
+                group.cells[occupant.c][i] = null;
               } else if (raw === null) {
-                // Place new note; clamp to measure boundary
-                const maxDurH = (_colsPerMeasure() - c) * 2;
+                const maxDurH = (group.div - c) * 2;
                 const durH = Math.min(_getDurH(), maxDurH);
-                const dur  = Math.min(Math.ceil(durH / 2), _colsPerMeasure() - c);
+                const dur  = Math.min(Math.ceil(durH / 2), group.div - c);
                 const note = { dur, durH };
                 if (_curArt)  note.art  = _curArt;
                 if (_curOrn)  note.orn  = _curOrn;
                 if (_curRoll) note.roll = { ..._curRoll };
-                _cells[m][c][i] = note;
+                group.cells[c][i] = note;
               }
             }
             _onGridChange();
           });
           cell.addEventListener('contextmenu', (e) => {
             e.preventDefault();
-            const m = +cell.dataset.m, c = +cell.dataset.c, i = +cell.dataset.i;
-            const raw = _cells[m][c][i];
-            _cells[m][c][i] = (raw === 'rest') ? null : 'rest';
+            const m = +cell.dataset.m, b = +cell.dataset.b, c = +cell.dataset.c, i = +cell.dataset.i;
+            const group = _cells[m][b];
+            const raw = group.cells[c][i];
+            group.cells[c][i] = (raw === 'rest') ? null : 'rest';
             _onGridChange();
           });
         });
       }
 
-      // Migra celdas antiguas: el formato viejo orn:'roll' (string) pasa al
-      // nuevo campo roll:{type:'buzz'}. Idempotente. Muta y devuelve `cells`.
+      // Migra celdas antiguas al nuevo formato por-beat. Idempotente.
       function _migrateCells(cells) {
         if (!Array.isArray(cells)) return cells;
+
+        const fixRoll = (cell) => {
+          if (cell && typeof cell === 'object' && cell.orn === 'roll') {
+            delete cell.orn;
+            cell.roll = { type: 'buzz', accentRelease: true };
+          }
+        };
+
+        const isOldRect = cells.length > 0 && Array.isArray(cells[0]) &&
+          !(cells[0][0] && typeof cells[0][0] === 'object' &&
+            'kind' in cells[0][0] && 'cells' in cells[0][0]);
+
+        if (isOldRect) {
+          const beats = _beatsPerMeasure();
+          const div   = _straightDiv();
+          const out = [];
+          for (const meas of cells) {
+            const cols = Array.isArray(meas) ? meas.length : 0;
+            const colsPerBeat = beats > 0 ? Math.round(cols / beats) : cols;
+            const measOut = [];
+            for (let b = 0; b < beats; b++) {
+              const groupCells = [];
+              for (let c = 0; c < colsPerBeat; c++) {
+                const srcCol = meas[b * colsPerBeat + c];
+                const arr = Array.isArray(srcCol)
+                  ? srcCol.map(cell => { fixRoll(cell); return cell; })
+                  : new Array(INSTRUMENTS.length).fill(null);
+                groupCells.push(arr);
+              }
+              measOut.push({ kind: 'straight', div: colsPerBeat || div, cells: groupCells });
+            }
+            out.push(measOut);
+          }
+          return out;
+        }
+
         for (const meas of cells) {
           if (!Array.isArray(meas)) continue;
-          for (const col of meas) {
-            if (!Array.isArray(col)) continue;
-            for (const cell of col) {
-              if (cell && typeof cell === 'object' && cell.orn === 'roll') {
-                delete cell.orn;
-                cell.roll = { type: 'buzz', accentRelease: true };
-              }
+          for (const group of meas) {
+            if (!group || !Array.isArray(group.cells)) continue;
+            for (const col of group.cells) {
+              if (Array.isArray(col)) for (const cell of col) fixRoll(cell);
             }
           }
         }
