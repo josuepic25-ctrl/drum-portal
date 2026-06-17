@@ -706,6 +706,18 @@
     }
     .dg-col-header.beat-start { color: var(--text-primary); font-weight: 500; }
     .dg-col-header.measure-start { border-left: 2px solid var(--border); }
+    #btn-triplet-mode.active { background: var(--accent); color: #0d1117; border-color: var(--accent); }
+    .dg-col-header.triplet-beat { color: var(--accent); }
+    .dg-col-header.triplet-beat.beat-start { cursor: pointer; }
+    .trip-badge {
+      display: inline-block;
+      font-size: 0.55rem;
+      font-weight: 700;
+      color: var(--accent);
+      vertical-align: super;
+      margin-right: 1px;
+    }
+    .dg-cell.triplet-beat { background: rgba(88, 166, 255, 0.04); }
     .dg-cell {
       width: 28px;
       min-width: 28px;
@@ -937,6 +949,10 @@
               <button id="btn-roll" class="dur-btn orn-btn" title="Roll / redoble — elegir tipo" aria-haspopup="true" aria-expanded="false"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 26 22" width="26" height="22"><ellipse cx="10" cy="17" rx="5" ry="3.3" transform="rotate(-18,10,17)" fill="currentColor"/><line x1="14.7" y1="15.5" x2="14.7" y2="2" stroke="currentColor" stroke-width="1.5"/><line x1="11" y1="12" x2="18" y2="9.5" stroke="currentColor" stroke-width="1.3"/><line x1="11" y1="9.5" x2="18" y2="7" stroke="currentColor" stroke-width="1.3"/><line x1="11" y1="7" x2="18" y2="4.5" stroke="currentColor" stroke-width="1.3"/></svg><span id="roll-label" class="roll-label"></span></button>
               <div id="roll-menu" class="roll-menu" hidden></div>
             </span>
+          </div>
+          <div class="gc-group">
+            <span class="gc-label">Tresillo</span>
+            <button id="btn-triplet-mode" class="dur-btn" title="Modo tresillo: lo que escribas irá en tresillos hasta desactivarlo" aria-pressed="false">3</button>
           </div>
           <button id="grid-clear" class="gc-btn-danger" title="Borrar todo">✕ Clear</button>
         </div>
@@ -1400,6 +1416,7 @@ K:C clef=perc
       let _curArt       = null;  // null | 'accent' | 'ghost'  (latching toggle)
       let _curOrn       = null;  // null | 'flam' | 'drag' | 'ruff'   (roll removed)
       let _curRoll      = null;  // null | { type, accentRelease }  (selección activa del picker de roll)
+      let _tripletMode = false;  // modo de escritura tresillo (toggle)
       // _cells[measure] = [ beatGroup, ... ]   (un grupo por beat del compás)
       // beatGroup = { kind:'straight'|'triplet', div:Number, cells: Cell[div][instIdx] }
       // Cell = null | 'rest' | { dur, durH, art?, orn?, roll? }
@@ -1432,6 +1449,10 @@ K:C clef=perc
           div,
           cells: Array.from({ length: div }, () => new Array(INSTRUMENTS.length).fill(null))
         };
+      }
+
+      function _beatIsEmpty(group) {
+        return group.cells.every(col => col.every(cell => cell === null));
       }
 
       // Returns {c} of the note that "owns" position (m,b,c,i) due to its duration,
@@ -1637,9 +1658,12 @@ K:C clef=perc
           for (let b = 0; b < beats.length; b++) {
             beatNum++;
             const group = beats[b];
-            for (let c = 0; c < group.div; c++) {
+            const empty = _beatIsEmpty(group);
+            const showKind = empty ? (_tripletMode ? 'triplet' : 'straight') : group.kind;
+            const showDiv  = empty ? (_tripletMode ? _tripletDiv() : _straightDiv()) : group.div;
+            for (let c = 0; c < showDiv; c++) {
               flat.push({
-                m, b, c, div: group.div, kind: group.kind, beatNum,
+                m, b, c, div: showDiv, kind: showKind, beatNum,
                 beatStart: c === 0,
                 measStart: b === 0 && c === 0
               });
@@ -1656,7 +1680,8 @@ K:C clef=perc
           if (col.kind === 'triplet') cls += ' triplet-beat';
           const label = _cellLabel(col.beatNum, col.c, col.div, col.kind);
           const badge = (col.kind === 'triplet' && col.c === 0) ? '<span class="trip-badge">3</span>' : '';
-          hdr += `<th class="${cls}">${badge}${label}</th>`;
+          const beatAttrs = col.beatStart ? ` data-beat-m="${col.m}" data-beat-b="${col.b}"` : '';
+          hdr += `<th class="${cls}"${beatAttrs}>${badge}${label}</th>`;
         }
         hdr += '</tr></thead>';
 
@@ -1717,14 +1742,21 @@ K:C clef=perc
               if (occupant) {
                 group.cells[occupant.c][i] = null;
               } else if (raw === null) {
-                const maxDurH = (group.div - c) * 2;
+                if (_beatIsEmpty(group)) {
+                  const wantKind = _tripletMode ? 'triplet' : 'straight';
+                  if (group.kind !== wantKind) {
+                    _cells[m][b] = _makeBeat(wantKind);
+                  }
+                }
+                const g2 = _cells[m][b];
+                const maxDurH = (g2.div - c) * 2;
                 const durH = Math.min(_getDurH(), maxDurH);
-                const dur  = Math.min(Math.ceil(durH / 2), group.div - c);
+                const dur  = Math.min(Math.ceil(durH / 2), g2.div - c);
                 const note = { dur, durH };
                 if (_curArt)  note.art  = _curArt;
                 if (_curOrn)  note.orn  = _curOrn;
                 if (_curRoll) note.roll = { ..._curRoll };
-                group.cells[c][i] = note;
+                g2.cells[c][i] = note;
               }
             }
             _onGridChange();
@@ -1735,6 +1767,17 @@ K:C clef=perc
             const group = _cells[m][b];
             const raw = group.cells[c][i];
             group.cells[c][i] = (raw === 'rest') ? null : 'rest';
+            _onGridChange();
+          });
+        });
+
+        _tableEl.querySelectorAll('.dg-col-header[data-beat-b]').forEach(th => {
+          th.addEventListener('click', () => {
+            const m = +th.dataset.beatM, b = +th.dataset.beatB;
+            const group = _cells[m][b];
+            const empty = _beatIsEmpty(group);
+            if (!empty && !confirm('Cambiar la subdivisión de este beat vaciará sus notas. ¿Continuar?')) return;
+            _cells[m][b] = _makeBeat(group.kind === 'triplet' ? 'straight' : 'triplet');
             _onGridChange();
           });
         });
@@ -1883,6 +1926,14 @@ K:C clef=perc
           }
           document.getElementById('btn-art-accent').addEventListener('click', () => _setArt('accent'));
           document.getElementById('btn-art-ghost').addEventListener('click', () => _setArt('ghost'));
+
+          document.getElementById('btn-triplet-mode').addEventListener('click', () => {
+            _tripletMode = !_tripletMode;
+            const btn = document.getElementById('btn-triplet-mode');
+            btn.classList.toggle('active', _tripletMode);
+            btn.setAttribute('aria-pressed', String(_tripletMode));
+            _renderTable();
+          });
 
           /* Ornament selector (grace notes) — single choice */
           const ORN_BTNS = { flam: 'btn-orn-flam', drag: 'btn-orn-drag', ruff: 'btn-orn-ruff' };
