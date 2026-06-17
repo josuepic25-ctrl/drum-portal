@@ -1612,10 +1612,10 @@ K:C clef=perc
               if (isNote) {
                 if (raw.art === 'accent')     cls += ' art-accent';
                 else if (raw.art === 'ghost') cls += ' art-ghost';
-                if (raw.orn) {
-                  const tag = ({ flam: 'F', drag: 'D', ruff: 'Rf', roll: 'Ro' })[raw.orn] || '';
-                  inner = `<span class="orn-tag">${tag}</span>`;
-                }
+                let tag = '';
+                if (raw.roll)     tag = (ROLL_TYPES[raw.roll.type] || {}).tag || 'R';
+                else if (raw.orn) tag = ({ flam: 'F', drag: 'D', ruff: 'Rf' })[raw.orn] || '';
+                if (tag) inner = `<span class="orn-tag">${tag}</span>`;
               }
               body += `<td class="${cls}" data-m="${m}" data-c="${c}" data-i="${i}">${inner}</td>`;
             }
