@@ -2114,12 +2114,13 @@ K:C clef=perc
       //              tracks:{ HH:"x.x.x.x.", SN:"g.X.x.f.", KI:"x...x..." },
       //              mods:{ SN:{ "0":{art:"accent",orn:"flam"} } } }
       // Per-position chars: '.'=silence  'x'=note  'X'=accent  'g'=ghost
-      //                     'f'=flam  'd'=drag  'r'=roll   (ruff via mods)
+      //                     'f'=flam  'd'=drag  'r'=roll(buzz)   (ruff y rolls específicos via mods)
       function _parseShorthand(data) {
         const ABBR = { CR:0, RD:1, RB:2, HH:3, HO:4, T1:5, T2:6, SN:7, TF:8, KI:9 };
         const CHAR_MOD = {
           'x': {}, 'X': { art: 'accent' }, 'g': { art: 'ghost' },
-          'f': { orn: 'flam' }, 'd': { orn: 'drag' }, 'r': { orn: 'roll' }
+          'f': { orn: 'flam' }, 'd': { orn: 'drag' },
+          'r': { roll: { type: 'buzz', accentRelease: true } }
         };
         const tsStr  = typeof data.timeSig === 'string' ? data.timeSig
                        : `${data.timeSig.num}/${data.timeSig.den}`;
@@ -2140,7 +2141,9 @@ K:C clef=perc
             if (mod === undefined) {
               throw new Error(`Carácter desconocido '${ch}' en pista ${abbr}, posición ${pos}`);
             }
-            cells[Math.floor(pos / cols)][pos % cols][idx] = { dur: 1, durH: 2, ...mod };
+            const newCell = { dur: 1, durH: 2, ...mod };
+            if (newCell.roll) newCell.roll = { ...newCell.roll };
+            cells[Math.floor(pos / cols)][pos % cols][idx] = newCell;
           }
         }
         for (const [abbr, byCol] of Object.entries(data.mods || {})) {
@@ -2154,7 +2157,19 @@ K:C clef=perc
               throw new Error(`mods en ${abbr} col ${pos} no tiene nota base`);
             }
             if (ov.art) cell.art = ov.art;
-            if (ov.orn) cell.orn = ov.orn;
+            if (ov.orn === 'roll') {
+              cell.roll = { type: 'buzz', accentRelease: true };   // migración formato viejo
+              delete cell.orn;
+            } else if (ov.orn) {
+              cell.orn = ov.orn;
+            }
+            if (ov.roll) {
+              if (!ROLL_TYPES[ov.roll.type]) {
+                throw new Error(`Tipo de roll desconocido '${ov.roll.type}' en ${abbr} col ${pos}`);
+              }
+              cell.roll = { type: ov.roll.type, accentRelease: ov.roll.accentRelease !== false };
+              delete cell.orn;
+            }
           }
         }
         return { measures, subdiv, timeSig, cells };
