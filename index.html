@@ -1490,7 +1490,7 @@ K:C clef=perc
                     // Legacy cells without durH use dur * cellIn32 as durX
                     const durH = cell.durH ?? cell.dur * 2;
                     const durX = durH * halfLIn32;
-                    notesHere.push({ note: INSTRUMENTS[i].note, dur: cell.dur, durX, art: cell.art, orn: cell.orn });
+                    notesHere.push({ note: INSTRUMENTS[i].note, dur: cell.dur, durX, art: cell.art, orn: cell.orn, roll: cell.roll });
                   }
                 }
               }
@@ -1503,11 +1503,13 @@ K:C clef=perc
                   }
                 }
                 // First non-null modifier wins for the merged chord event.
-                const art   = notesHere.find(n => n.art)?.art || null;
-                const ornEv = notesHere.find(n => n.orn);
-                const orn   = ornEv?.orn || null;
+                const art    = notesHere.find(n => n.art)?.art || null;
+                const ornEv  = notesHere.find(n => n.orn);
+                const orn    = ornEv?.orn || null;
+                const rollEv = notesHere.find(n => n.roll);
+                const roll   = rollEv?.roll || null;
                 const graceNote = ornEv ? ornEv.note : notesHere[0].note;
-                events.push({ absX, notes: notesHere.map(n => n.note), dur, durX, art, orn, graceNote });
+                events.push({ absX, notes: notesHere.map(n => n.note), dur, durX, art, orn, roll, graceNote });
               }
             }
           }
@@ -1533,16 +1535,20 @@ K:C clef=perc
                 if (ev.art === 'accent')     deco += '!accent!';
                 else if (ev.art === 'ghost') { deco += '!(.!'; decoClose = '!).!'; }
                 const chord = ev.notes.length === 1 ? ev.notes[0] : '[' + ev.notes.join('') + ']';
-                if (ev.orn === 'roll') {
-                  // Roll: repeat rapid hits so it sounds like a roll (not just visual)
-                  // hitSz = 4 (32nd units = 1/8 note subdivision hit), min 2
-                  const hitSz = Math.max(2, Math.min(4, Math.floor(ev.durX / 4)));
-                  const hits  = Math.floor(ev.durX / hitSz);
-                  const rem   = ev.durX - hits * hitSz;
-                  // First hit carries visual !///! + art decoration
-                  voice += prefix + deco + '!///!' + chord + fmtLen(hitSz) + decoClose;
-                  for (let h = 1; h < hits; h++) voice += chord + fmtLen(hitSz);
-                  if (rem > 0) voice += chord + fmtLen(rem);
+                if (ev.roll) {
+                  const sizes = _expandRoll(ev.durX, ev.roll.type);
+                  const def   = ROLL_TYPES[ev.roll.type] || ROLL_TYPES.buzz;
+                  const last  = sizes.length - 1;
+                  const accRelease = ev.roll.accentRelease && def.strokes != null;
+                  for (let h = 0; h < sizes.length; h++) {
+                    const isFirst = h === 0;
+                    const pre    = isFirst ? prefix : '';
+                    const dOpen  = isFirst ? deco : '';
+                    const dClose = isFirst ? decoClose : '';
+                    const trem   = isFirst ? `!trem${def.trem}!` : '';
+                    const acc    = (h === last && accRelease) ? '!accent!' : '';
+                    voice += pre + dOpen + acc + trem + chord + fmtLen(sizes[h]) + dClose;
+                  }
                 } else {
                   voice += prefix + deco + chord + fmtLen(ev.durX) + decoClose;
                 }
@@ -1683,6 +1689,32 @@ K:C clef=perc
           }
         }
         return cells;
+      }
+
+      // Expande un roll en una lista de duraciones de golpe (en unidades de 1/32)
+      // que suman exactamente durX. Medidos: N golpes (último absorbe el resto).
+      // Sostenidos: golpes de tamaño hitSz llenando durX (+ golpe corto sobrante).
+      // El espaciado SIEMPRE deriva de durX — nunca de una subdivisión fija
+      // (esto permite tresillos en Fase 2 sin cambiar el motor).
+      function _expandRoll(durX, type) {
+        const def = ROLL_TYPES[type] || ROLL_TYPES.buzz;
+        let hitSz, hits;
+        if (def.strokes != null) {
+          hits  = Math.min(def.strokes, durX);
+          hitSz = Math.max(1, Math.floor(durX / def.strokes));
+        } else {
+          hitSz = Math.max(1, Math.min(def.hitSz, durX));
+          hits  = Math.floor(durX / hitSz);
+        }
+        const sizes = [];
+        let used = 0;
+        for (let h = 0; h < hits; h++) { sizes.push(hitSz); used += hitSz; }
+        const rem = durX - used;
+        if (rem > 0) {
+          if (def.strokes != null) sizes[sizes.length - 1] += rem; // medido: el cierre se alarga
+          else sizes.push(rem);                                    // sostenido: golpe corto extra
+        }
+        return sizes;
       }
 
       function _onGridChange() {
