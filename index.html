@@ -2246,22 +2246,81 @@ K:C clef=perc
         const timeSig = { num: n, den: d };
         const subdiv   = data.subdiv  || 8;
         const measures = data.measures || 1;
-        const cols = Math.round(n * subdiv / d);
-        const cells = Array.from({ length: measures }, () =>
-          Array.from({ length: cols }, () => Array(10).fill(null)));
-        for (const [abbr, pat] of Object.entries(data.tracks || {})) {
+        const beatsPerMeasure = n;
+        const straightDiv = Math.round(subdiv / d);
+        const tripletDiv  = Math.round(straightDiv * 3 / 2);
+        const totalBeats  = measures * beatsPerMeasure;
+
+        const beatKinds = new Array(totalBeats).fill('straight');
+        if (data.beats && typeof data.beats === 'object') {
+          for (const [k, v] of Object.entries(data.beats)) {
+            const bi = parseInt(k, 10);
+            if (!Number.isInteger(bi) || bi < 0 || bi >= totalBeats) continue;
+            if (v !== 'straight' && v !== 'triplet') {
+              throw new Error(`Subdivisión de beat inválida '${v}' en beat ${bi} (usa "straight" o "triplet")`);
+            }
+            beatKinds[bi] = v;
+          }
+        }
+        const divOf = (bi) => beatKinds[bi] === 'triplet' ? tripletDiv : straightDiv;
+
+        const cells = [];
+        let gbi = 0;
+        for (let m = 0; m < measures; m++) {
+          const meas = [];
+          for (let b = 0; b < beatsPerMeasure; b++) {
+            const div = divOf(gbi++);
+            meas.push({ kind: beatKinds[gbi - 1], div,
+              cells: Array.from({ length: div }, () => new Array(10).fill(null)) });
+          }
+          cells.push(meas);
+        }
+
+        const setCell = (mIdx, bIdx, cIdx, idx, mod) => {
+          const newCell = { dur: 1, durH: 2, ...mod };
+          if (newCell.roll) newCell.roll = { ...newCell.roll };
+          cells[mIdx][bIdx].cells[cIdx][idx] = newCell;
+        };
+        for (const [abbr, patRaw] of Object.entries(data.tracks || {})) {
           const idx = ABBR[abbr.toUpperCase()];
           if (idx === undefined) continue;
-          for (let pos = 0; pos < Math.min(pat.length, measures * cols); pos++) {
-            const ch = pat[pos];
-            if (ch === '.' || ch === ' ') continue;
-            const mod = CHAR_MOD[ch] ?? CHAR_MOD[ch.toLowerCase()];
-            if (mod === undefined) {
-              throw new Error(`Carácter desconocido '${ch}' en pista ${abbr}, posición ${pos}`);
+          let segments;
+          if (patRaw.includes('|')) {
+            segments = patRaw.split('|');
+            if (segments.length !== totalBeats) {
+              throw new Error(`Pista ${abbr}: ${segments.length} segmentos '|' pero el compás tiene ${totalBeats} beats`);
             }
-            const newCell = { dur: 1, durH: 2, ...mod };
-            if (newCell.roll) newCell.roll = { ...newCell.roll };
-            cells[Math.floor(pos / cols)][pos % cols][idx] = newCell;
+          } else {
+            segments = [];
+            for (let bi = 0; bi < totalBeats; bi++) {
+              segments.push(patRaw.slice(bi * straightDiv, (bi + 1) * straightDiv));
+            }
+          }
+          for (let bi = 0; bi < totalBeats; bi++) {
+            const seg = segments[bi];
+            const expected = divOf(bi);
+            if (patRaw.includes('|') && seg.length !== expected) {
+              throw new Error(`Pista ${abbr}, beat ${bi}: ${seg.length} caracteres pero se esperaban ${expected} (${beatKinds[bi]})`);
+            }
+            const mIdx = Math.floor(bi / beatsPerMeasure);
+            const bIdx = bi % beatsPerMeasure;
+            for (let c = 0; c < Math.min(seg.length, expected); c++) {
+              const ch = seg[c];
+              if (ch === '.' || ch === ' ') continue;
+              const mod = CHAR_MOD[ch] ?? CHAR_MOD[ch.toLowerCase()];
+              if (mod === undefined) {
+                throw new Error(`Carácter desconocido '${ch}' en pista ${abbr}, beat ${bi}, pos ${c}`);
+              }
+              setCell(mIdx, bIdx, c, idx, mod);
+            }
+          }
+        }
+
+        const colMap = [];
+        for (let m = 0; m < measures; m++) {
+          for (let b = 0; b < beatsPerMeasure; b++) {
+            const gi = m * beatsPerMeasure + b;
+            for (let c = 0; c < divOf(gi); c++) colMap.push({ m, b, c });
           }
         }
         for (const [abbr, byCol] of Object.entries(data.mods || {})) {
@@ -2269,18 +2328,15 @@ K:C clef=perc
           if (idx === undefined) continue;
           for (const [colStr, ov] of Object.entries(byCol)) {
             const pos = parseInt(colStr, 10);
-            if (!Number.isInteger(pos) || pos < 0 || pos >= measures * cols) continue;
-            const cell = cells[Math.floor(pos / cols)][pos % cols][idx];
+            const loc = colMap[pos];
+            if (!loc) continue;
+            const cell = cells[loc.m][loc.b].cells[loc.c][idx];
             if (!cell) {
               throw new Error(`mods en ${abbr} col ${pos} no tiene nota base`);
             }
             if (ov.art) cell.art = ov.art;
-            if (ov.orn === 'roll') {
-              cell.roll = { type: 'buzz', accentRelease: true };   // migración formato viejo
-              delete cell.orn;
-            } else if (ov.orn) {
-              cell.orn = ov.orn;
-            }
+            if (ov.orn === 'roll') { cell.roll = { type: 'buzz', accentRelease: true }; delete cell.orn; }
+            else if (ov.orn) cell.orn = ov.orn;
             if (ov.roll) {
               if (!ROLL_TYPES[ov.roll.type]) {
                 throw new Error(`Tipo de roll desconocido '${ov.roll.type}' en ${abbr} col ${pos}`);
@@ -2290,6 +2346,7 @@ K:C clef=perc
             }
           }
         }
+
         return { measures, subdiv, timeSig, cells };
       }
 
