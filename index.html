@@ -1308,6 +1308,31 @@ K:C clef=perc
     })();
 
     /* ═══════════════════════════════════════
+       ROLL TYPES — biblioteca de la familia de redobles
+       Compartida por DrumGridModule (sonido/visual) y
+       ScoreLibraryModule (parser de shorthand).
+       strokes=null  → sostenido: llena la duración a densidad `hitSz`
+       strokes=N     → medido: N golpes repartidos sobre la duración
+       tag           → etiqueta corta (grid + botón); label → menú
+       trem          → nº de rayas de trémolo (1/2/3) para la notación
+    ═══════════════════════════════════════ */
+    const ROLL_TYPES = {
+      buzz:   { label: 'Buzz',      tag: 'Bz', group: 'Sostenidos', strokes: null, hitSz: 1, trem: 3 },
+      single: { label: 'Single',    tag: 'Sg', group: 'Sostenidos', strokes: null, hitSz: 4, trem: 1 },
+      double: { label: 'Double',    tag: 'Db', group: 'Sostenidos', strokes: null, hitSz: 2, trem: 3 },
+      triple: { label: 'Triple',    tag: 'Tp', group: 'Sostenidos', strokes: null, hitSz: 2, trem: 3 },
+      m5:  { label: '5 golpes',  tag: '5',  group: 'Medidos', strokes: 5,  trem: 2 },
+      m6:  { label: '6 golpes',  tag: '6',  group: 'Medidos', strokes: 6,  trem: 2 },
+      m7:  { label: '7 golpes',  tag: '7',  group: 'Medidos', strokes: 7,  trem: 3 },
+      m9:  { label: '9 golpes',  tag: '9',  group: 'Medidos', strokes: 9,  trem: 2 },
+      m10: { label: '10 golpes', tag: '10', group: 'Medidos', strokes: 10, trem: 2 },
+      m11: { label: '11 golpes', tag: '11', group: 'Medidos', strokes: 11, trem: 2 },
+      m13: { label: '13 golpes', tag: '13', group: 'Medidos', strokes: 13, trem: 3 },
+      m15: { label: '15 golpes', tag: '15', group: 'Medidos', strokes: 15, trem: 3 },
+      m17: { label: '17 golpes', tag: '17', group: 'Medidos', strokes: 17, trem: 3 }
+    };
+
+    /* ═══════════════════════════════════════
        DRUM GRID MODULE
     ═══════════════════════════════════════ */
     const DrumGridModule = (() => {
@@ -1341,7 +1366,8 @@ K:C clef=perc
       let _curDurFrac16 = 2;  // selected duration in 16ths (1=16th, 2=8th, 4=quarter, 8=half, 16=whole)
       let _isDotted     = false;
       let _curArt       = null;  // null | 'accent' | 'ghost'  (latching toggle)
-      let _curOrn       = null;  // null | 'flam' | 'drag' | 'ruff' | 'roll'  (single-choice)
+      let _curOrn       = null;  // null | 'flam' | 'drag' | 'ruff'   (roll removed)
+      let _curRoll      = null;  // null | { type, accentRelease }  (selección activa del picker de roll)
       // _cells[measure][col][instIdx] = null | 'rest' | { dur, durH, art?, orn? }
       let _cells    = [];
       let _abcMode  = false; // true = raw ABC textarea visible
@@ -1640,6 +1666,25 @@ K:C clef=perc
         });
       }
 
+      // Migra celdas antiguas: el formato viejo orn:'roll' (string) pasa al
+      // nuevo campo roll:{type:'buzz'}. Idempotente. Muta y devuelve `cells`.
+      function _migrateCells(cells) {
+        if (!Array.isArray(cells)) return cells;
+        for (const meas of cells) {
+          if (!Array.isArray(meas)) continue;
+          for (const col of meas) {
+            if (!Array.isArray(col)) continue;
+            for (const cell of col) {
+              if (cell && typeof cell === 'object' && cell.orn === 'roll') {
+                delete cell.orn;
+                cell.roll = { type: 'buzz', accentRelease: true };
+              }
+            }
+          }
+        }
+        return cells;
+      }
+
       function _onGridChange() {
         _renderTable();
         const abc = _buildABC();
@@ -1759,7 +1804,7 @@ K:C clef=perc
         },
 
         setState(st) {
-          _cells   = JSON.parse(JSON.stringify(st.cells));
+          _cells   = _migrateCells(JSON.parse(JSON.stringify(st.cells)));
           _measures = st.measures;
           _subdiv  = st.subdiv;
           _timeSig = { ...st.timeSig };
