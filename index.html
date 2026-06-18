@@ -1621,7 +1621,7 @@ K:C clef=perc
               else if (ev.orn === 'ruff') prefix += `{${g}${g}${g}}`;
               let deco = '', decoClose = '';
               if (ev.art === 'accent')     deco += '!accent!';
-              else if (ev.art === 'ghost') { deco += '!(.!'; decoClose = '!).!'; }
+              else if (ev.art === 'ghost') { deco += '"^()"!pp!'; decoClose = '!mf!'; }
               const chord = ev.notes.length === 1 ? ev.notes[0] : '[' + ev.notes.join('') + ']';
               const nextEvPos = (evIdx < events.length) ? events[evIdx].posF : beatFace;
               const clampToNext = (nextEvPos > posF) ? (nextEvPos - posF) : (beatFace - posF);
