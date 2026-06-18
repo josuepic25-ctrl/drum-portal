@@ -1455,17 +1455,24 @@ K:C clef=perc
         return group.cells.every(col => col.every(cell => cell === null));
       }
 
-      // Returns {c} of the note that "owns" position (m,b,c,i) due to its duration,
-      // or null if the cell is unoccupied. Notes are scoped to their beat.
+      // Returns {b, c} of the note that "owns" position (m,b,c,i) due to its duration,
+      // or null if the cell is unoccupied. Searches across straight beat boundaries.
       function _getOccupantCell(m, b, c, i) {
-        const group = _cells[m]?.[b];
-        if (!group) return null;
-        for (let pc = c - 1; pc >= 0; pc--) {
-          const cell = group.cells[pc]?.[i];
-          if (cell && typeof cell === 'object') {
-            return (c - pc) < cell.dur ? { c: pc } : null;
+        let targetGlobal = c;
+        for (let xb = 0; xb < b; xb++) targetGlobal += (_cells[m]?.[xb]?.div || 0);
+        for (let pb = b; pb >= 0; pb--) {
+          const pg = _cells[m]?.[pb];
+          if (!pg) break;
+          const startC = (pb === b) ? c - 1 : pg.div - 1;
+          for (let pc = startC; pc >= 0; pc--) {
+            const cell = pg.cells[pc]?.[i];
+            if (cell && typeof cell === 'object') {
+              let sourceGlobal = pc;
+              for (let xb = 0; xb < pb; xb++) sourceGlobal += (_cells[m]?.[xb]?.div || 0);
+              return (targetGlobal - sourceGlobal) < cell.dur ? { b: pb, c: pc } : null;
+            }
+            if (cell === 'rest') return null;
           }
-          if (cell === 'rest') break;
         }
         return null;
       }
@@ -1524,7 +1531,8 @@ K:C clef=perc
           return s;
         }
 
-        function emitBeat(group, idxs) {
+        function emitBeat(group, idxs, pendingRolls) {
+          pendingRolls = pendingRolls || {};
           const div       = group.div;
           const faceUnit  = cellIn32;
           const beatFace  = div * faceUnit;
@@ -1542,7 +1550,7 @@ K:C clef=perc
                 if (cell && typeof cell === 'object') {
                   const durH = cell.durH ?? cell.dur * 2;
                   const durX = durH * halfLIn32;
-                  notesHere.push({ note: INSTRUMENTS[i].note, dur: cell.dur, durX, art: cell.art, orn: cell.orn, roll: cell.roll });
+                  notesHere.push({ note: INSTRUMENTS[i].note, dur: cell.dur, durX, art: cell.art, orn: cell.orn, roll: cell.roll, instIdx: i });
                 }
               }
             }
@@ -1559,12 +1567,13 @@ K:C clef=perc
               const orn    = ornEv?.orn || null;
               const rollEv = notesHere.find(n => n.roll);
               const roll   = rollEv?.roll || null;
+              const rollInstIdx = rollEv ? rollEv.instIdx : null;
               const graceNote = ornEv ? ornEv.note : notesHere[0].note;
-              events.push({ posF, notes: notesHere.map(n => n.note), dur, durX, art, orn, roll, graceNote });
+              events.push({ posF, notes: notesHere.map(n => n.note), dur, durX, art, orn, roll, graceNote, rollInstIdx });
             }
           }
 
-          if (events.length === 0) return emitRest(realUnits);
+          if (events.length === 0 && Object.keys(pendingRolls).length === 0) return emitRest(realUnits);
 
           let inner = '';
           let count = 0;
@@ -1578,6 +1587,29 @@ K:C clef=perc
               n -= best;
             }
           };
+
+          // Continue measured-roll strokes from a previous beat
+          for (const [iStr, pend] of Object.entries(pendingRolls)) {
+            const pi = Number(iStr);
+            if (!idxs.includes(pi)) continue;
+            let fi = pend.fromIdx;
+            while (fi < pend.allSizes.length) {
+              const sz = pend.allSizes[fi];
+              if (posF + sz > beatFace) break;
+              const isLast = fi === pend.allSizes.length - 1;
+              const acc = (isLast && pend.accentRelease) ? '!accent!' : '';
+              inner += acc + pend.chord + fmtLen(sz);
+              count++;
+              posF += sz;
+              fi++;
+            }
+            if (fi >= pend.allSizes.length) delete pendingRolls[pi];
+            else pend.fromIdx = fi;
+            break; // one pending roll per beat (rare to have more)
+          }
+          // Skip events already covered by pending roll continuation
+          while (evIdx < events.length && events[evIdx].posF < posF) evIdx++;
+
           while (posF < beatFace) {
             const ev = evIdx < events.length ? events[evIdx] : null;
             if (ev && ev.posF === posF) {
@@ -1593,8 +1625,32 @@ K:C clef=perc
               const chord = ev.notes.length === 1 ? ev.notes[0] : '[' + ev.notes.join('') + ']';
               const nextEvPos = (evIdx < events.length) ? events[evIdx].posF : beatFace;
               const clampToNext = (nextEvPos > posF) ? (nextEvPos - posF) : (beatFace - posF);
-              const durX  = Math.min(ev.durX, beatFace - posF, clampToNext);
-              if (ev.roll) {
+              if (ev.roll && ROLL_TYPES[ev.roll.type]?.strokes != null) {
+                // Measured roll: use full durX, split across beat boundary if needed
+                const def      = ROLL_TYPES[ev.roll.type];
+                const allSizes = _expandRoll(ev.durX, ev.roll.type);
+                const accRelease = ev.roll.accentRelease;
+                let h = 0;
+                for (; h < allSizes.length; h++) {
+                  const sz = allSizes[h];
+                  if (posF + sz > beatFace) break;
+                  const isFirst = h === 0;
+                  const pre    = isFirst ? prefix : '';
+                  const dOpen  = isFirst ? deco : '';
+                  const dClose = isFirst ? decoClose : '';
+                  const trem   = isFirst ? `!trem${def.trem}!` : '';
+                  const acc    = (h === allSizes.length - 1 && accRelease) ? '!accent!' : '';
+                  inner += pre + dOpen + acc + trem + chord + fmtLen(sz) + dClose;
+                  count++;
+                  posF += sz;
+                }
+                if (h < allSizes.length) {
+                  pendingRolls[ev.rollInstIdx] = { allSizes, fromIdx: h, chord, def, accentRelease: accRelease };
+                  restCounted(beatFace - posF);
+                  posF = beatFace;
+                }
+              } else if (ev.roll) {
+                const durX = Math.min(ev.durX, beatFace - posF, clampToNext);
                 const sizes = _expandRoll(durX, ev.roll.type);
                 const def   = ROLL_TYPES[ev.roll.type] || ROLL_TYPES.buzz;
                 const last  = sizes.length - 1;
@@ -1609,11 +1665,13 @@ K:C clef=perc
                   inner += pre + dOpen + acc + trem + chord + fmtLen(sizes[h]) + dClose;
                   count++;
                 }
+                posF += durX;
               } else {
+                const durX = Math.min(ev.durX, beatFace - posF, clampToNext);
                 inner += prefix + deco + chord + fmtLen(durX) + decoClose;
                 count++;
+                posF += durX;
               }
-              posF += durX;
             } else if (ev && ev.posF > posF) {
               restCounted(ev.posF - posF);
               posF = ev.posF;
@@ -1635,8 +1693,9 @@ K:C clef=perc
           for (let m = 0; m < _measures; m++) {
             voice += '|';
             const beats = _cells[m] || [];
+            const pendingRolls = {};
             for (let b = 0; b < beats.length; b++) {
-              voice += emitBeat(beats[b], idxs);
+              voice += emitBeat(beats[b], idxs, pendingRolls);
             }
           }
           voice += '|\n';
@@ -1740,7 +1799,7 @@ K:C clef=perc
             } else {
               const occupant = _getOccupantCell(m, b, c, i);
               if (occupant) {
-                group.cells[occupant.c][i] = null;
+                _cells[m][occupant.b].cells[occupant.c][i] = null;
               } else if (raw === null) {
                 if (_beatIsEmpty(group)) {
                   const wantKind = _tripletMode ? 'triplet' : 'straight';
@@ -1749,9 +1808,24 @@ K:C clef=perc
                   }
                 }
                 const g2 = _cells[m][b];
-                const maxDurH = (g2.div - c) * 2;
-                const durH = Math.min(_getDurH(), maxDurH);
-                const dur  = Math.min(Math.ceil(durH / 2), g2.div - c);
+                const rollDef = _curRoll ? (ROLL_TYPES[_curRoll.type] || null) : null;
+                // Measured rolls: count available cells across subsequent straight beats
+                let maxAvailCells = g2.div - c;
+                if (rollDef && rollDef.strokes != null) {
+                  let nb = b + 1;
+                  const mBeats = _cells[m] || [];
+                  while (nb < mBeats.length) {
+                    if (mBeats[nb].kind !== 'straight') break;
+                    maxAvailCells += mBeats[nb].div;
+                    nb++;
+                  }
+                }
+                const maxDurH = maxAvailCells * 2;
+                const minDurH = (rollDef && rollDef.strokes != null)
+                  ? Math.ceil(rollDef.strokes * _subdiv / 16)
+                  : 1;
+                const durH = Math.min(Math.max(_getDurH(), minDurH), maxDurH);
+                const dur  = Math.ceil(durH / 2);
                 const note = { dur, durH };
                 if (_curArt)  note.art  = _curArt;
                 if (_curOrn)  note.orn  = _curOrn;
