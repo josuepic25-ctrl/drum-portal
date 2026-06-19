@@ -108,6 +108,44 @@
     }
     #abc-editor:focus { box-shadow: inset 2px 0 0 var(--accent); }
 
+    /* ── ABC import drawer ────────────────────────────── */
+    #abc-import-drawer {
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px 12px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    #abc-import-drawer.open { display: flex; }
+    #abc-import-text {
+      width: 100%;
+      height: 110px;
+      font-family: monospace;
+      font-size: 11px;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 6px;
+      resize: vertical;
+      box-sizing: border-box;
+    }
+    #abc-import-text:focus { outline: none; box-shadow: inset 2px 0 0 var(--accent); }
+    .abc-import-row { display: flex; gap: 8px; align-items: center; }
+    .abc-import-row small { color: var(--text-muted, #888); font-size: 10px; }
+    #btn-abc-import {
+      margin-left: auto;
+      font-size: 0.72rem;
+      padding: 2px 8px;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-secondary, #aaa);
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    #btn-abc-import:hover { border-color: var(--accent); color: var(--accent); }
+
     /* ── Render panel ─────────────────────────────────── */
     #render-panel-wrapper {
       flex: 1.8;
@@ -118,10 +156,13 @@
     #render-panel {
       flex: 1;
       overflow-y: auto;
+      overflow-x: auto;
       padding: 1rem;
       background: var(--bg-base);
+      min-width: 0;
     }
-    #render-panel svg { width: 100%; height: auto; }
+    #render-panel > div { display: block; min-width: max-content; }
+    #render-panel svg { width: 100%; height: auto; display: block; }
 
     /* abcjs SVG dark-mode overrides */
     #render-panel .abcjs-note_head,
@@ -675,8 +716,14 @@
       background: var(--bg-base);
     }
     #drum-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding: 8px 0;
+      min-width: max-content;
+    }
+    .dg-section {
       border-collapse: collapse;
-      min-width: 100%;
       table-layout: fixed;
     }
     .dg-row-head {
@@ -782,6 +829,23 @@
       border: none;
       padding: 0;
     }
+
+    /* ── Score expand mode (desktop) ────────────────── */
+    #btn-score-expand {
+      background: none;
+      color: var(--text-muted);
+      border: 1px solid transparent;
+      border-radius: 4px;
+      padding: 2px 7px;
+      font-size: 0.85rem;
+      line-height: 1;
+      cursor: pointer;
+      font-family: inherit;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    #btn-score-expand:hover { border-color: var(--border); color: var(--text-primary); }
+    #render-panel-wrapper.score-expanded { flex: 1 1 100% !important; max-width: 100%; }
+    #editor-panel:has(~ #render-panel-wrapper.score-expanded) { display: none !important; }
 
     /* ── Grid expand mode (desktop) ─────────────────── */
     #btn-grid-expand {
@@ -958,7 +1022,7 @@
         </div>
         <!-- Grid scroll area -->
         <div id="drum-grid-scroll">
-          <table id="drum-grid" cellspacing="0" cellpadding="0"></table>
+          <div id="drum-grid"></div>
         </div>
         <!-- Hidden ABC textarea (used by tutor/AI mode) -->
         <textarea id="abc-editor"
@@ -971,7 +1035,21 @@
 
       <!-- RIGHT / BOTTOM: Render + Playback -->
       <div id="render-panel-wrapper">
-        <div class="panel-label">Partitura</div>
+        <div class="panel-label" style="display:flex;align-items:center;justify-content:space-between;">
+          <span>Partitura</span>
+          <div style="display:flex;gap:4px;">
+            <button id="btn-score-expand" title="Expandir partitura (oculta grid)">⛶</button>
+            <button id="btn-abc-import" title="Cargar partitura desde texto ABC">⬆ ABC</button>
+          </div>
+        </div>
+        <div id="abc-import-drawer">
+          <textarea id="abc-import-text" spellcheck="false" placeholder="Pega aquí el texto ABC y haz clic en Cargar…"></textarea>
+          <div class="abc-import-row">
+            <small>Cualquier texto ABC válido (X:, M:, L:, K:, notas…)</small>
+            <button id="btn-abc-load">Cargar</button>
+            <button id="btn-abc-cancel">✕</button>
+          </div>
+        </div>
         <div id="render-panel"></div>
         <div id="playback-bar">
           <button id="btn-play" class="pb-btn" disabled>▶ Play</button>
@@ -1117,10 +1195,233 @@ K:C clef=perc
         _badgeEl.textContent = text;
       }
 
+      // After renderAbc, replace the "^()" text annotation with SVG parentheses
+      // drawn directly around the note head. Uses path 'd' coordinates instead of
+      // getBBox() so it works even when the render panel is display:none.
+      // The abcjs-annotation element is a child of the abcjs-note group, so the
+      // sibling paths give us the notehead position without needing layout.
+      function _postProcessGhostNotes() {
+        const ns = 'http://www.w3.org/2000/svg';
+        _renderEl.querySelectorAll('svg').forEach(svg => {
+          const annotations = [...svg.querySelectorAll('[class*="abcjs-annotation"]')]
+            .filter(el => el.textContent.trim() === '()');
+          if (!annotations.length) return;
+
+          annotations.forEach(ann => {
+            const noteGroup = ann.parentElement;
+            if (!noteGroup) return;
+
+            // Collect the M (moveto) starting points from all non-stem paths in the group.
+            // For a standard notehead the two path M-points bracket the notehead's
+            // top-left and bottom-left, giving us height and approximate extent.
+            let allX = [], allY = [];
+            noteGroup.querySelectorAll('path').forEach(path => {
+              if ((path.getAttribute('class') || '').includes('abcjs-stem')) return;
+              const matches = [...(path.getAttribute('d') || '')
+                .matchAll(/M\s*([-\d.]+)\s+([-\d.]+)/g)];
+              matches.forEach(m => {
+                allX.push(parseFloat(m[1]));
+                allY.push(parseFloat(m[2]));
+              });
+            });
+            if (!allX.length) return;
+
+            const maxX = Math.max(...allX);
+            const minY = Math.min(...allY);
+            const maxY = Math.max(...allY);
+            const nhH  = maxY - minY;
+            if (nhH < 2) return;
+
+            // Stem x gives the left anchor (stem is always left of the notehead)
+            const stemPath = noteGroup.querySelector('[class*="abcjs-stem"]');
+            let stemX = Math.min(...allX);
+            if (stemPath) {
+              const sm = (stemPath.getAttribute('d') || '').match(/M\s*([-\d.]+)/);
+              if (sm) stemX = Math.min(stemX, parseFloat(sm[1]));
+            }
+
+            const fontSize = nhH * 2.1;
+            const midY     = minY + nhH * 0.5;
+            const baseline = midY + fontSize * 0.38;
+
+            const addParen = (x, ch) => {
+              const t = document.createElementNS(ns, 'text');
+              t.setAttribute('x', x);
+              t.setAttribute('y', baseline);
+              t.setAttribute('font-size', fontSize);
+              t.style.fill = 'var(--text-primary, currentColor)';
+              t.textContent = ch;
+              svg.appendChild(t);
+            };
+
+            addParen(stemX  - nhH * 0.5,              '(');
+            addParen(maxX   + nhH * 1.1,              ')');
+
+            ann.setAttribute('display', 'none');
+          });
+        });
+      }
+
+      // Splits ABC into chunks of WRAP measures and renders each into its own div.
+      // Returns the first chunk's visualObj for playback cursor tracking.
+      function _renderWrapped(el, code) {
+        el.innerHTML = '';
+        const WRAP = 4;
+        const baseOpts = {
+          scale:          1.2,
+          paddingtop:     20,
+          paddingbottom:  10,
+          add_classes:    true,
+          oneSvgPerLine:  false,
+          selectionColor: '#58a6ff'
+        };
+
+        const lines = code.split('\n');
+
+        // Find last K: line (end of header section)
+        let kIdx = -1;
+        for (let i = lines.length - 1; i >= 0; i--) {
+          if (/^K:/.test(lines[i])) { kIdx = i; break; }
+        }
+        if (kIdx < 0) return (ABCJS.renderAbc(el, code, baseOpts)[0]) || null;
+
+        const header = lines.slice(0, kIdx + 1).join('\n');
+        const rest   = lines.slice(kIdx + 1).filter(l => l.trim());
+
+        // Parse voice blocks; keep w: lines and %% directives separate from note content
+        const postKDirectives = [];
+        const voices = [];
+        let cur = null;
+        for (const line of rest) {
+          if (/^%%/.test(line.trim())) {
+            // %% directives after K: (e.g. %%percmap) must appear in every chunk header
+            postKDirectives.push(line.trim());
+          } else if (/^V:/.test(line)) {
+            if (cur) voices.push(cur);
+            cur = { vLine: line, notes: '', wLines: [] };
+          } else if (/^w:/.test(line.trim())) {
+            const target = cur || (voices.length ? voices[voices.length - 1] : null);
+            if (target) target.wLines.push(line.trim().slice(2).trim());
+          } else if (cur) {
+            cur.notes += line;
+          } else {
+            if (!voices.length) voices.push({ vLine: null, notes: '', wLines: [] });
+            voices[0].notes += line;
+          }
+        }
+        if (cur) voices.push(cur);
+
+        if (!voices.length || !voices.some(v => v.notes.trim())) {
+          return (ABCJS.renderAbc(el, code, baseOpts)[0]) || null;
+        }
+
+        // Count main notes, excluding grace-note groups {…}, decorators !…!, and annotations "…"
+        function countNotes(measures) {
+          let count = 0, inGrace = false, inDeco = false, inAnnot = false;
+          for (const m of measures) {
+            for (const ch of m) {
+              if (ch === '{') { inGrace = true;  continue; }
+              if (ch === '}') { inGrace = false; continue; }
+              if (ch === '!') { inDeco  = !inDeco;  continue; }
+              if (ch === '"') { inAnnot = !inAnnot; continue; }
+              if (!inGrace && !inDeco && !inAnnot && /[a-gA-GzZ]/.test(ch)) count++;
+            }
+          }
+          return count;
+        }
+
+        // Split each voice's note string on | barlines; collect w: syllable tokens
+        const voiceMeasures = voices.map(v => ({
+          vLine:    v.vLine,
+          measures: v.notes.replace(/\|[\]|]+$/, '').split('|').filter(m => m.trim()),
+          wTokens:  (v.wLines.join(' ')).match(/\S+/g) || []
+        }));
+
+        const total = Math.max(...voiceMeasures.map(v => v.measures.length));
+        if (!total) return (ABCJS.renderAbc(el, code, baseOpts)[0]) || null;
+
+        let firstVisualObj = null;
+        const wOffsets = voiceMeasures.map(() => 0);  // syllable cursor per voice
+
+        for (let start = 0; start < total; start += WRAP) {
+          const end = Math.min(start + WRAP, total);
+
+          // Strip title and tempo from all but the first chunk;
+          // always append %% directives (e.g. %%percmap) so abcjs has them in every chunk
+          const baseHeader = start === 0 ? header
+            : header.split('\n').filter(l => !/^[TQ]:/.test(l)).join('\n');
+          const chunkHeader = postKDirectives.length
+            ? baseHeader + '\n' + postKDirectives.join('\n')
+            : baseHeader;
+
+          let chunk = chunkHeader + '\n';
+          for (let vi = 0; vi < voiceMeasures.length; vi++) {
+            const v = voiceMeasures[vi];
+            if (v.vLine) chunk += v.vLine + '\n';
+            const sliceMeasures = v.measures.slice(start, end);
+            chunk += '|' + sliceMeasures.join('|') + '|\n';
+
+            // Append correctly-sliced w: sticking for this chunk
+            if (v.wTokens.length > 0) {
+              const noteCount = countNotes(sliceMeasures);
+              const syllables = v.wTokens.slice(wOffsets[vi], wOffsets[vi] + noteCount);
+              if (syllables.length > 0) {
+                chunk += 'w: ' + syllables.join(' ') + '\n';
+                wOffsets[vi] += syllables.length;
+              }
+            }
+          }
+
+          const div = document.createElement('div');
+          el.appendChild(div);
+          const opts = { ...baseOpts, paddingtop: start === 0 ? 20 : 4 };
+          const vo = ABCJS.renderAbc(div, chunk, opts);
+
+          // Add viewBox so CSS width:100% scales content instead of clipping it
+          const svg = div.querySelector('svg');
+          if (svg && !svg.getAttribute('viewBox')) {
+            const w = parseFloat(svg.getAttribute('width') || '770');
+            const h = parseFloat(svg.getAttribute('height') || '200');
+            svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+          }
+
+          if (start === 0 && vo[0]) firstVisualObj = vo[0];
+        }
+
+        return firstVisualObj;
+      }
+
       return {
         init(renderEl, badgeEl) {
           _renderEl = renderEl;
           _badgeEl  = badgeEl;
+        },
+
+        renderRaw(abcText) {
+          const code = abcText.trim();
+          if (!code) return;
+          const visualObj = _renderWrapped(_renderEl, code);
+          _postProcessGhostNotes();
+          const warnings = (visualObj && visualObj.warnings) ? visualObj.warnings : [];
+          const hasError = warnings.some(w => /error/i.test(w));
+          // Render the full piece (no chunking) into a hidden div so the synth
+          // gets a visualObj that covers all measures, not just the first chunk.
+          let synthVisualObj = visualObj;
+          if (!hasError) {
+            const synthDiv = document.createElement('div');
+            synthDiv.style.display = 'none';
+            document.body.appendChild(synthDiv);
+            const synthVo = ABCJS.renderAbc(synthDiv, code, { add_classes: true });
+            document.body.removeChild(synthDiv);
+            if (synthVo && synthVo[0]) synthVisualObj = synthVo[0];
+          }
+          StateModule.set('visualObj', hasError ? null : synthVisualObj);
+          if (typeof PlaybackModule !== 'undefined') {
+            PlaybackModule.enableControls(!hasError);
+            if (!hasError) PlaybackModule.syncTempoFromCode(code);
+          }
+          _setBadge(hasError ? 'error' : (warnings.length ? 'warning' : 'ok'),
+                    hasError ? '✕ ' + warnings[0] : (warnings.length ? '⚠ ' + warnings[0] : '✓ OK'));
         },
 
         render() {
@@ -1132,18 +1433,11 @@ K:C clef=perc
             return;
           }
 
-          const visualObj = ABCJS.renderAbc(_renderEl, code, {
-            responsive:     'resize',
-            scale:          1.2,
-            paddingtop:     20,
-            paddingbottom:  20,
-            add_classes:    true,
-            oneSvgPerLine:  false,
-            selectionColor: '#58a6ff'
-          });
+          const visualObj = _renderWrapped(_renderEl, code);
+          _postProcessGhostNotes();
 
-          const warnings = (visualObj[0] && visualObj[0].warnings)
-            ? visualObj[0].warnings : [];
+          const warnings = (visualObj && visualObj.warnings)
+            ? visualObj.warnings : [];
           const hasError = warnings.some(w => /error/i.test(w));
           const hasWarn  = warnings.length > 0;
 
@@ -1152,7 +1446,7 @@ K:C clef=perc
             _setBadge('error', '✕ ' + warnings[0]);
             if (typeof PlaybackModule !== 'undefined') PlaybackModule.enableControls(false);
           } else {
-            StateModule.set('visualObj', visualObj[0]);
+            StateModule.set('visualObj', visualObj);
             StateModule.set('lastValidCode', code);
             if (typeof PlaybackModule !== 'undefined') {
               PlaybackModule.enableControls(true);
@@ -1266,7 +1560,7 @@ K:C clef=perc
         _tempoRenderTimer = setTimeout(() => {
           const abc = StateModule.get('abcCode');
           if (abc) {
-            const updated = abc.replace(/^Q:\s*\d+/m, 'Q:' + bpm);
+            const updated = abc.replace(/^Q:(.*=)?\s*\d+/m, 'Q:$1' + bpm);
             StateModule.set('abcCode', updated);
             if (typeof RendererModule !== 'undefined') RendererModule.render();
           }
@@ -1349,7 +1643,8 @@ K:C clef=perc
         },
 
         syncTempoFromCode(code) {
-          const match = code.match(/^Q:\s*(\d+)/m);
+          // Handles both Q:76 and Q:3/8=76 formats
+          const match = code.match(/^Q:(?:[^=\n]+=)?\s*(\d+)/m);
           if (match) _syncTempo(parseInt(match[1], 10));
         }
       };
@@ -1709,75 +2004,84 @@ K:C clef=perc
 
       function _renderTable() {
         if (!_tableEl) return;
-
-        const flat = [];
+        const WRAP = 4;
+        let html = '';
         let beatNum = 0;
-        for (let m = 0; m < _measures; m++) {
-          const beats = _cells[m] || [];
-          for (let b = 0; b < beats.length; b++) {
-            beatNum++;
-            const group = beats[b];
-            const empty = _beatIsEmpty(group);
-            const showKind = empty ? (_tripletMode ? 'triplet' : 'straight') : group.kind;
-            const showDiv  = empty ? (_tripletMode ? _tripletDiv() : _straightDiv()) : group.div;
-            for (let c = 0; c < showDiv; c++) {
-              flat.push({
-                m, b, c, div: showDiv, kind: showKind, beatNum,
-                beatStart: c === 0,
-                measStart: b === 0 && c === 0
-              });
+
+        for (let rowStart = 0; rowStart < _measures; rowStart += WRAP) {
+          const rowEnd = Math.min(rowStart + WRAP, _measures);
+          const flat = [];
+
+          for (let m = rowStart; m < rowEnd; m++) {
+            const beats = _cells[m] || [];
+            for (let b = 0; b < beats.length; b++) {
+              beatNum++;
+              const group = beats[b];
+              const empty = _beatIsEmpty(group);
+              const showKind = empty ? (_tripletMode ? 'triplet' : 'straight') : group.kind;
+              const showDiv  = empty ? (_tripletMode ? _tripletDiv() : _straightDiv()) : group.div;
+              for (let c = 0; c < showDiv; c++) {
+                flat.push({
+                  m, b, c, div: showDiv, kind: showKind, beatNum,
+                  beatStart: c === 0,
+                  measStart: b === 0 && c === 0
+                });
+              }
             }
           }
-        }
-        const totalCols = flat.length;
 
-        let hdr = '<thead><tr><th class="dg-row-head"></th>';
-        for (const col of flat) {
-          let cls = 'dg-col-header';
-          if (col.beatStart) cls += ' beat-start';
-          if (col.measStart) cls += ' measure-start';
-          if (col.kind === 'triplet') cls += ' triplet-beat';
-          const label = _cellLabel(col.beatNum, col.c, col.div, col.kind);
-          const badge = (col.kind === 'triplet' && col.c === 0) ? '<span class="trip-badge">3</span>' : '';
-          const beatAttrs = col.beatStart ? ` data-beat-m="${col.m}" data-beat-b="${col.b}"` : '';
-          hdr += `<th class="${cls}"${beatAttrs}>${badge}${label}</th>`;
-        }
-        hdr += '</tr></thead>';
+          const totalCols = flat.length;
 
-        let body = '<tbody>';
-        for (let i = 0; i < INSTRUMENTS.length; i++) {
-          body += `<tr><td class="dg-row-head">${INSTRUMENTS[i].abbr}</td>`;
+          let hdr = '<thead><tr><th class="dg-row-head"></th>';
           for (const col of flat) {
-            const group  = _cells[col.m][col.b];
-            const raw    = group.cells[col.c]?.[i] ?? null;
-            const isNote = raw && typeof raw === 'object';
-            const isCont = !raw && !!_getOccupantCell(col.m, col.b, col.c, i);
-            let cls = 'dg-cell';
-            if (isNote)              cls += ' note';
-            else if (raw === 'rest') cls += ' rest';
-            else if (isCont)         cls += ' cont';
-            if (col.beatStart)       cls += ' beat-start';
-            if (col.measStart)       cls += ' measure-start';
+            let cls = 'dg-col-header';
+            if (col.beatStart) cls += ' beat-start';
+            if (col.measStart) cls += ' measure-start';
             if (col.kind === 'triplet') cls += ' triplet-beat';
-            let inner = '';
-            if (isNote) {
-              if (raw.art === 'accent')     cls += ' art-accent';
-              else if (raw.art === 'ghost') cls += ' art-ghost';
-              let tag = '';
-              if (raw.roll)     tag = (ROLL_TYPES[raw.roll.type] || {}).tag || 'R';
-              else if (raw.orn) tag = ({ flam: 'F', drag: 'D', ruff: 'Rf' })[raw.orn] || '';
-              if (tag) inner = `<span class="orn-tag">${tag}</span>`;
-            }
-            body += `<td class="${cls}" data-m="${col.m}" data-b="${col.b}" data-c="${col.c}" data-i="${i}">${inner}</td>`;
+            const label = _cellLabel(col.beatNum, col.c, col.div, col.kind);
+            const badge = (col.kind === 'triplet' && col.c === 0) ? '<span class="trip-badge">3</span>' : '';
+            const beatAttrs = col.beatStart ? ` data-beat-m="${col.m}" data-beat-b="${col.b}"` : '';
+            hdr += `<th class="${cls}"${beatAttrs}>${badge}${label}</th>`;
           }
-          body += '</tr>';
-          if (i === 4 || i === 7) {
-            body += `<tr class="dg-row-separator"><td colspan="${totalCols + 1}"></td></tr>`;
-          }
-        }
-        body += '</tbody>';
+          hdr += '</tr></thead>';
 
-        _tableEl.innerHTML = hdr + body;
+          let body = '<tbody>';
+          for (let i = 0; i < INSTRUMENTS.length; i++) {
+            body += `<tr><td class="dg-row-head">${INSTRUMENTS[i].abbr}</td>`;
+            for (const col of flat) {
+              const group  = _cells[col.m][col.b];
+              const raw    = group.cells[col.c]?.[i] ?? null;
+              const isNote = raw && typeof raw === 'object';
+              const isCont = !raw && !!_getOccupantCell(col.m, col.b, col.c, i);
+              let cls = 'dg-cell';
+              if (isNote)              cls += ' note';
+              else if (raw === 'rest') cls += ' rest';
+              else if (isCont)         cls += ' cont';
+              if (col.beatStart)       cls += ' beat-start';
+              if (col.measStart)       cls += ' measure-start';
+              if (col.kind === 'triplet') cls += ' triplet-beat';
+              let inner = '';
+              if (isNote) {
+                if (raw.art === 'accent')     cls += ' art-accent';
+                else if (raw.art === 'ghost') cls += ' art-ghost';
+                let tag = '';
+                if (raw.roll)     tag = (ROLL_TYPES[raw.roll.type] || {}).tag || 'R';
+                else if (raw.orn) tag = ({ flam: 'F', drag: 'D', ruff: 'Rf' })[raw.orn] || '';
+                if (tag) inner = `<span class="orn-tag">${tag}</span>`;
+              }
+              body += `<td class="${cls}" data-m="${col.m}" data-b="${col.b}" data-c="${col.c}" data-i="${i}">${inner}</td>`;
+            }
+            body += '</tr>';
+            if (i === 4 || i === 7) {
+              body += `<tr class="dg-row-separator"><td colspan="${totalCols + 1}"></td></tr>`;
+            }
+          }
+          body += '</tbody>';
+
+          html += `<table class="dg-section" cellspacing="0" cellpadding="0">${hdr}${body}</table>`;
+        }
+
+        _tableEl.innerHTML = html;
         _attachCellListeners();
       }
 
@@ -2469,6 +2773,156 @@ K:C clef=perc
     /* ═══════════════════════════════════════
        APP INIT — wire everything on load
     ═══════════════════════════════════════ */
+    /* ═══════════════════════════════════════
+       ABC → GRID STATE PARSER
+       Converts a pasted ABC tune into the DrumGridModule state format
+       so the imported score lives in the grid and can be edited + played back.
+       Handles: 2/4 and 4/4, L:1/16 or L:1/32, accents (!>!), rests,
+       text-annotated measured rolls ("^9 str."), triplets ((3 or (3:2:3)).
+    ═══════════════════════════════════════ */
+    function _parseABCToGridState(abcText) {
+      const tsM = abcText.match(/^M:(\d+)\/(\d+)/m);
+      if (!tsM) return null;
+      const tsNum = +tsM[1], tsDen = +tsM[2];
+
+      const lM = abcText.match(/^L:1\/(\d+)/m);
+      const baseLen = lM ? +lM[1] : 16;
+
+      const subdiv = 16;
+      const cellsPerBeat = subdiv / tsDen;   // 4 for 2/4 or 4/4
+      const unitsPerCell = baseLen / subdiv; // 1 for L:1/16; 2 for L:1/32
+
+      // Strip headers; keep only note content
+      const kIdx = abcText.search(/^K:/m);
+      if (kIdx < 0) return null;
+      const body = abcText.slice(kIdx)
+        .replace(/^K:.*$/m, '')
+        .replace(/^V:\d+.*$/gm, '')
+        .replace(/%%.*$/gm, '')
+        .replace(/\\\n/g, ' ')
+        .replace(/\n/g, ' ')
+        .trim()
+        .replace(/^\|/, '');
+
+      const measureStrs = body.split(/\|+/).filter(s => s.trim().length > 0);
+
+      const cells = [];
+      const snareIdx = 7; // INSTRUMENTS array: SN = index 7
+
+      for (const mStr of measureStrs) {
+        const s = mStr.trim().replace(/[:|]+$/, '').trim();
+        if (!s) continue;
+
+        const beats = Array.from({length: tsNum}, () => ({
+          kind: 'straight',
+          div:  cellsPerBeat,
+          cells: Array.from({length: cellsPerBeat}, () => Array(10).fill(null))
+        }));
+
+        let posF      = 0;   // fractional 16th-cell position within the measure
+        let art       = null;
+        let rollDeco  = null;
+        let annotation = null;
+        let inTriplet  = 0;  // countdown of remaining triplet notes
+        let i = 0;
+
+        while (i < s.length) {
+          if (/\s/.test(s[i])) { i++; continue; }
+
+          // Text annotation "^9 str." etc.
+          if (s[i] === '"') {
+            let j = i + 1;
+            while (j < s.length && s[j] !== '"') j++;
+            annotation = s.slice(i + 1, j);
+            i = j + 1; continue;
+          }
+
+          // Decoration !>!, !trem2!, !pp!, etc.
+          if (s[i] === '!') {
+            let j = i + 1;
+            while (j < s.length && s[j] !== '!') j++;
+            const deco = s.slice(i + 1, j);
+            if (deco === '>') art = 'accent';
+            else if (/^trem/.test(deco)) rollDeco = deco;
+            else if (deco === 'pp') art = art || 'ghost';
+            i = j + 1; continue;
+          }
+
+          // Triplet marker: (3  or  (3:2:3
+          if (s[i] === '(' && /\d/.test(s[i + 1] || '')) {
+            const n = parseInt(s[i + 1]);
+            i += 2;
+            // Skip optional :p:q suffix
+            if (s[i] === ':') { i++; while (i < s.length && /[\d:]/.test(s[i])) i++; }
+            inTriplet = n;
+            const b = Math.min(Math.floor(posF / cellsPerBeat), tsNum - 1);
+            beats[b].kind = 'triplet';
+            beats[b].div  = n;
+            beats[b].cells = Array.from({length: n}, () => Array(10).fill(null));
+            continue;
+          }
+
+          // Grace note group {…}: skip entirely (flams, drags, etc.)
+          if (s[i] === '{') {
+            while (i < s.length && s[i] !== '}') i++;
+            i++; continue;
+          }
+
+          // Accidental — skip, same note
+          if ('^_='.includes(s[i])) { i++; continue; }
+
+          // Note or rest
+          const ch = s[i];
+          if (/[a-gA-GzZ]/.test(ch)) {
+            i++;
+            while (i < s.length && (s[i] === "'" || s[i] === ',')) i++;
+            let durStr = '';
+            while (i < s.length && /\d/.test(s[i])) { durStr += s[i]; i++; }
+            if (i < s.length && (s[i] === '>' || s[i] === '<')) i++;
+
+            const durUnits = durStr ? parseInt(durStr) : 1;
+            const isRest   = ch.toLowerCase() === 'z';
+            const advance  = inTriplet > 0
+              ? cellsPerBeat / 3
+              : durUnits / unitsPerCell;
+
+            if (!isRest) {
+              const b    = Math.min(Math.floor(posF / cellsPerBeat), tsNum - 1);
+              const frac = posF % cellsPerBeat;
+              const c    = inTriplet > 0
+                ? Math.min(Math.round(frac / (cellsPerBeat / 3)), beats[b].div - 1)
+                : Math.min(Math.round(frac), beats[b].div - 1);
+
+              if (b >= 0 && b < tsNum && c >= 0 && c < beats[b].div) {
+                let rollType = null;
+                if (annotation) {
+                  const rm = annotation.match(/(\d+)\s*str/i);
+                  if (rm && ROLL_TYPES['m' + rm[1]]) rollType = 'm' + rm[1];
+                }
+                beats[b].cells[c][snareIdx] = {
+                  dur:  inTriplet > 0 ? 1 : Math.max(1, Math.round(advance)),
+                  art:  art || null,
+                  roll: rollType ? { type: rollType, accentRelease: false } : null
+                };
+              }
+            }
+
+            posF += advance;
+            art  = null; rollDeco = null; annotation = null;
+            if (inTriplet > 0) inTriplet--;
+          } else {
+            i++;
+          }
+        }
+
+        cells.push(beats);
+      }
+
+      return cells.length > 0
+        ? { cells, measures: cells.length, subdiv, timeSig: { num: tsNum, den: tsDen } }
+        : null;
+    }
+
     window.addEventListener('load', function AppInit() {
       /* ── URL ?load= parameter (drum tutor / share link) ── */
       const _urlLoadParam = new URLSearchParams(location.search).get('load');
@@ -2507,12 +2961,31 @@ K:C clef=perc
       );
 
       /* ── Desktop: expand grid (hides score panel) ── */
-      const editorPanel = document.getElementById('editor-panel');
-      const btnExpand   = document.getElementById('btn-grid-expand');
+      const editorPanel    = document.getElementById('editor-panel');
+      const renderWrapper  = document.getElementById('render-panel-wrapper');
+      const btnExpand      = document.getElementById('btn-grid-expand');
+      const btnScoreExpand = document.getElementById('btn-score-expand');
+
       btnExpand.addEventListener('click', () => {
+        // Collapse score-expand if active
+        renderWrapper.classList.remove('score-expanded');
+        btnScoreExpand.textContent = '⛶';
+        btnScoreExpand.title = 'Expandir partitura (oculta grid)';
+
         const isExpanded = editorPanel.classList.toggle('grid-expanded');
         btnExpand.textContent = isExpanded ? '⊡' : '⛶';
         btnExpand.title = isExpanded ? 'Volver a vista dividida' : 'Expandir grid (oculta partitura)';
+      });
+
+      btnScoreExpand.addEventListener('click', () => {
+        // Collapse grid-expand if active
+        editorPanel.classList.remove('grid-expanded');
+        btnExpand.textContent = '⛶';
+        btnExpand.title = 'Expandir grid (oculta partitura)';
+
+        const isExpanded = renderWrapper.classList.toggle('score-expanded');
+        btnScoreExpand.textContent = isExpanded ? '⊡' : '⛶';
+        btnScoreExpand.title = isExpanded ? 'Volver a vista dividida' : 'Expandir partitura (oculta grid)';
       });
 
       /* ── Mobile: tab switching (Grid ↔ Partitura) ── */
@@ -2530,6 +3003,37 @@ K:C clef=perc
           Object.values(mobileTargetMap).forEach(el => el.classList.remove('mobile-visible'));
           mobileTargetMap[tab.dataset.target].classList.add('mobile-visible');
         });
+      });
+
+      /* ── ABC import drawer ── */
+      const abcDrawer   = document.getElementById('abc-import-drawer');
+      const abcTextarea = document.getElementById('abc-import-text');
+      document.getElementById('btn-abc-import').addEventListener('click', () => {
+        abcDrawer.classList.toggle('open');
+        if (abcDrawer.classList.contains('open')) abcTextarea.focus();
+      });
+      document.getElementById('btn-abc-cancel').addEventListener('click', () => {
+        abcDrawer.classList.remove('open');
+      });
+      document.getElementById('btn-abc-load').addEventListener('click', () => {
+        const text = abcTextarea.value.trim();
+        if (!text) return;
+        try {
+          const st = _parseABCToGridState(text);
+          if (st && st.cells.length > 0) DrumGridModule.setState(st);
+        } catch (e) {
+          console.warn('ABC→grid parse error:', e);
+        }
+        // Always render the original ABC so the score preserves every notation
+        // element (w: sticking, "^text" roll labels, grace notes, ornaments).
+        RendererModule.renderRaw(text);
+        // Override grid ABC in state so the 200ms tempo-sync re-render uses the
+        // original ABC (not the simplified grid reconstruction).
+        StateModule.set('abcCode', text);
+        abcDrawer.classList.remove('open');
+        // On mobile, switch to Partitura tab so the score is immediately visible
+        const scoreTab = document.querySelector('.mobile-tab[data-target="render-panel-wrapper"]');
+        if (scoreTab) scoreTab.click();
       });
 
       /* Init Score Library */
