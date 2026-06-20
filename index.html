@@ -1391,6 +1391,42 @@ K:C clef=perc
         return firstVisualObj;
       }
 
+      // abcjs renders !trem2!/!trem4! as visual tremolo slashes but the synth
+      // plays a single sustained note. For AUDIO ONLY, expand each rolled note
+      // into a burst of fast notes (32nd for trem2, 64th for trem4) summing to
+      // the same duration, so rolls actually sound like rolls. The on-screen
+      // score keeps the tremolo notation untouched.
+      function _expandRollsForSynth(abc) {
+        return abc
+          // Drop sticking lines — not needed for audio and avoids align warnings.
+          .split('\n').filter(l => !/^w:/.test(l.trim())).join('\n')
+          // Expand !tremN!<decorations>c<dur> into repeated short notes.
+          .replace(/!trem(\d+)!((?:![a-z0-9]+!)*)c(\d*)/gi, (m, trem, decos, dur) => {
+            const units = parseInt(dur, 10) || 1;          // duration in 1/16 units
+            const level = parseInt(trem, 10);
+            const sub   = level >= 4 ? 4 : 2;              // 4 = 64th notes, 2 = 32nd notes
+            const piece = sub === 4 ? 'c//' : 'c/';        // sub-note length
+            const count = units * sub;
+            let out = decos + piece;                        // first sub-note keeps accent etc.
+            for (let i = 1; i < count; i++) out += piece;
+            return out;
+          });
+      }
+
+      // Builds a playback-only visualObj from the full piece (no chunking) with
+      // rolls expanded into audible sub-strokes. Returns `fallback` on failure.
+      function _buildSynthVisualObj(code, fallback) {
+        try {
+          const synthDiv = document.createElement('div');
+          synthDiv.style.display = 'none';
+          document.body.appendChild(synthDiv);
+          const synthVo = ABCJS.renderAbc(synthDiv, _expandRollsForSynth(code), { add_classes: true });
+          document.body.removeChild(synthDiv);
+          if (synthVo && synthVo[0]) return synthVo[0];
+        } catch (e) { /* fall through to fallback */ }
+        return fallback;
+      }
+
       return {
         init(renderEl, badgeEl) {
           _renderEl = renderEl;
@@ -1406,16 +1442,8 @@ K:C clef=perc
           const hasError = warnings.some(w => /error/i.test(w));
           // Render the full piece (no chunking) into a hidden div so the synth
           // gets a visualObj that covers all measures, not just the first chunk.
-          let synthVisualObj = visualObj;
-          if (!hasError) {
-            const synthDiv = document.createElement('div');
-            synthDiv.style.display = 'none';
-            document.body.appendChild(synthDiv);
-            const synthVo = ABCJS.renderAbc(synthDiv, code, { add_classes: true });
-            document.body.removeChild(synthDiv);
-            if (synthVo && synthVo[0]) synthVisualObj = synthVo[0];
-          }
-          StateModule.set('visualObj', hasError ? null : synthVisualObj);
+          const synthVisualObj = hasError ? null : _buildSynthVisualObj(code, visualObj);
+          StateModule.set('visualObj', synthVisualObj);
           if (typeof PlaybackModule !== 'undefined') {
             PlaybackModule.enableControls(!hasError);
             if (!hasError) PlaybackModule.syncTempoFromCode(code);
@@ -1446,7 +1474,7 @@ K:C clef=perc
             _setBadge('error', '✕ ' + warnings[0]);
             if (typeof PlaybackModule !== 'undefined') PlaybackModule.enableControls(false);
           } else {
-            StateModule.set('visualObj', visualObj);
+            StateModule.set('visualObj', _buildSynthVisualObj(code, visualObj));
             StateModule.set('lastValidCode', code);
             if (typeof PlaybackModule !== 'undefined') {
               PlaybackModule.enableControls(true);
